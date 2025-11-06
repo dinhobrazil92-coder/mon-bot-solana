@@ -1,251 +1,203 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Tracker Solana
-Notifications ACHAT / VENTE / CREATION
-Chat ID 8228401361 pre-autorise
-Helius + Render
+Bot Telegram Tracker Solana avec Webhook Helius
+- Notifications instantanées : achat, vente, création de token
+- Compatible Render (port + serveur Flask)
 """
+
 import os
+import json
 import time
 import threading
-import json
 import requests
-from datetime import datetime
-from flask import Flask
+from flask import Flask, request
 
 # === CONFIG ===
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "c888ba69-de31-43b7-b6c6-f6f841351f56")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
+PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
 
-# === DATA ===
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
 SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
-WALLETS_FILE = f"{DATA_DIR}/wallets.txt"
-SEEN_FILE = f"{DATA_DIR}/seen.txt"
-UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
 
-# === FICHIERS ===
+# === OUTILS FICHIERS ===
 def load_json(file_path):
-    if not os.path.exists(file_path): return {}
+    if not os.path.exists(file_path):
+        return {}
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except: return {}
+    except Exception as e:
+        print(f"[load_json] Erreur {file_path}: {e}")
+        return {}
 
 def save_json(file_path, data):
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-    except: pass
-
-def load_list(file_path):
-    if not os.path.exists(file_path): return []
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return [l.strip() for l in f if l.strip()]
-    except: return []
-
-def save_list(file_path, data):
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(data) + "\n")
-    except: pass
-
-def load_set(file_path): return set(load_list(file_path))
-def save_set(file_path, data): save_list(file_path, list(data))
-
-def load_update_id():
-    if not os.path.exists(UPDATE_ID_FILE): return 0
-    try:
-        with open(UPDATE_ID_FILE, "r", encoding="utf-8") as f:
-            return int(f.read().strip())
-    except: return 0
-
-def save_update_id(uid):
-    try:
-        with open(UPDATE_ID_FILE, "w", encoding="utf-8") as f:
-            f.write(str(uid))
-    except: pass
-
-# === AUTH (PRE-AUTORISE) ===
-MY_CHAT_ID = "8228401361"  # TON ID
-
-def is_authorized(chat_id):
-    return str(chat_id) == MY_CHAT_ID or str(chat_id) in load_json(AUTHORIZED_FILE)
-
-def pre_authorize():
-    data = load_json(AUTHORIZED_FILE)
-    data[MY_CHAT_ID] = True
-    save_json(AUTHORIZED_FILE, data)
+    except Exception as e:
+        print(f"[save_json] Erreur {file_path}: {e}")
 
 # === TELEGRAM ===
 def send_message(chat_id, text):
-    if not BOT_TOKEN: return
+    if not BOT_TOKEN:
+        print("[send_message] BOT_TOKEN manquant")
+        return
     try:
-        r = requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            data={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            },
             timeout=10
         )
-        if r.status_code != 200:
-            print(f"TG ERROR {r.status_code}: {r.text}")
+        if resp.status_code != 200:
+            print(f"[TG] Erreur {resp.status_code}: {resp.text}")
         else:
-            print(f"Envoye a {chat_id}")
+            print(f"[TG] ✅ Message envoyé à {chat_id}")
     except Exception as e:
-        print(f"TG ERR: {e}")
+        print(f"[TG] Exception: {e}")
 
-# === TEST FORCE ===
-def force_test():
-    time.sleep(15)
-    send_message(MY_CHAT_ID, "BOT DEMARRE !\n\nTest force reussi.\nEnvoie /add <wallet>")
+# === AUTH ===
+def is_authorized(chat_id):
+    return str(chat_id) in load_json(AUTHORIZED_FILE)
 
-# === HELIUS RPC ===
-HELIUS_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+def authorize(chat_id):
+    data = load_json(AUTHORIZED_FILE)
+    data[str(chat_id)] = True
+    save_json(AUTHORIZED_FILE, data)
 
-def rpc(method, params=None):
-    if params is None: params = []
-    try:
-        r = requests.post(HELIUS_URL, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=15)
-        r.raise_for_status()
-        return r.json().get("result")
-    except Exception as e:
-        print(f"RPC ERR {method}: {e}")
-        return None
+# === FLASK SERVER ===
+app = Flask(__name__)
 
-def get_signatures(w, l=10): return rpc("getSignaturesForAddress", [w, {"limit": l}]) or []
-def get_transaction(s): return rpc("getTransaction", [s, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
+@app.route("/")
+def index():
+    return "✅ Bot Solana actif avec webhook Helius"
 
-# === DETECTION ===
-TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-MINT_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+@app.route("/health")
+def health():
+    return "OK", 200
 
-def detect_creation(tx, wallet):
-    if not tx: return None
-    for i in tx.get("transaction", {}).get("message", {}).get("instructions", []):
-        if i.get("programId") != MINT_PROGRAM: continue
-        p = i.get("parsed", {})
-        if p.get("type") == "initializeMint":
-            info = p.get("info", {})
-            mint = info.get("mint")
-            if mint and info.get("mintAuthority") == wallet:
-                return {"mint": mint}
-    return None
+# === WEBHOOK HELIUS ===
+@app.route("/helius", methods=["POST"])
+def helius_webhook():
+    data = request.get_json()
+    if not data:
+        return "No data", 400
 
-def detect_transfer(tx, wallet):
-    if not tx: return None
-    all_i = tx.get("transaction", {}).get("message", {}).get("instructions", [])[:]
-    for inner in tx.get("meta", {}).get("innerInstructions", []):
-        all_i.extend(inner.get("instructions", []))
-    for i in all_i:
-        if i.get("programId") != TOKEN_PROGRAM: continue
-        p = i.get("parsed", {})
-        if p.get("type") not in ("transfer", "transferChecked"): continue
-        info = p.get("info", {})
-        src = info.get("source")
-        dst = info.get("destination")
-        mint = info.get("mint") or "?"
-        amt = info.get("amount")
-        dec = info.get("tokenAmount", {}).get("decimals") if "tokenAmount" in info else None
-        if dst == wallet: return {"type": "ACHAT", "mint": mint, "amount": amt, "decimals": dec}
-        if src == wallet: return {"type": "VENTE", "mint": mint, "amount": amt, "decimals": dec}
-    return None
+    subs = load_json(SUBSCRIPTIONS_FILE)
+    print(f"[Helius] Événement reçu: {json.dumps(data, indent=2)}")
 
-# === TRACKER ===
-def tracker():
-    print("Tracker demarre")
-    seen = load_set(SEEN_FILE)
-    while True:
+    for event in data.get("events", []):
         try:
-            wallets = load_list(WALLETS_FILE)
-            if not wallets:
-                time.sleep(30)
-                continue
-            for w in wallets:
-                sigs = get_signatures(w, 10)
-                for s in sigs:
-                    sig = s.get("signature")
-                    if not sig or sig in seen: continue
-                    tx = get_transaction(sig)
-                    creation = detect_creation(tx, w)
-                    if creation:
-                        msg = f"NOUVEAU TOKEN CREE !\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>\n<code>{creation['mint'][:8]}...{creation['mint'][-6:]}</code>"
-                        send_message(MY_CHAT_ID, msg)
-                    transfer = detect_transfer(tx, w)
-                    if transfer:
-                        try:
-                            if transfer["decimals"] is not None:
-                                amt = int(transfer["amount"]) / (10 ** int(transfer["decimals"]))
-                            else:
-                                amt = int(transfer["amount"]) / 1_000_000_000
-                            amount = f"{amt:,.8f}".rstrip("0").rstrip(".")
-                        except:
-                            amount = str(transfer["amount"])
-                        msg = f"<b>{transfer['type']}</b>\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>\n<code>{amount}</code>"
-                        send_message(MY_CHAT_ID, msg)
-                    seen.add(sig)
-                    save_set(SEEN_FILE, seen)
-            time.sleep(18)
+            wallet = event.get("account", "inconnu")
+            tx_hash = event.get("signature", "inconnu")
+            amount = event.get("amount", "?")
+            mint = event.get("mint", "?")
+            action_type = event.get("type", "Transaction")
+
+            message = (
+                f"💰 <b>{action_type}</b>\n\n"
+                f"👛 Wallet: <code>{wallet}</code>\n"
+                f"🪙 Token: <code>{mint}</code>\n"
+                f"💵 Montant: <code>{amount}</code>\n"
+                f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir la transaction</a>"
+            )
+
+            # Envoi du message à tous les abonnés du wallet
+            for cid in subs.get(wallet, []):
+                if is_authorized(cid):
+                    send_message(cid, message)
         except Exception as e:
-            print(f"Tracker err: {e}")
-            time.sleep(10)
+            print(f"[Helius webhook] Erreur lors du traitement: {e}")
+
+    return "OK", 200
 
 # === BOT TELEGRAM ===
 def bot():
-    print("Bot polling demarre")
-    offset = load_update_id()
+    print("[Bot] Démarrage du polling Telegram...")
+    offset = 0
     while True:
         try:
-            up = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=40).json()
-            for u in up.get("result", []):
-                offset = u["update_id"] + 1
-                save_update_id(offset)
-                m = u.get("message") or {}
-                cid = m.get("chat", {}).get("id")
-                txt = (m.get("text") or "").strip()
-                if not txt.startswith("/"): continue
-                cmd = txt.split()[0].lower()
-                args = " ".join(txt.split()[1:])
+            resp = requests.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
+                params={"offset": offset, "timeout": 30},
+                timeout=40
+            ).json()
 
-                if not is_authorized(cid):
-                    send_message(cid, "Acces refuse. Contacte l'admin.")
+            updates = resp.get("result", [])
+            for update in updates:
+                offset = update["update_id"] + 1
+                msg = update.get("message", {})
+                chat_id = msg.get("chat", {}).get("id")
+                text = (msg.get("text") or "").strip()
+                if not text.startswith("/"):
                     continue
 
+                parts = text.split(maxsplit=1)
+                cmd = parts[0].lower()
+                args = parts[1] if len(parts) > 1 else ""
+
                 subs = load_json(SUBSCRIPTIONS_FILE)
+
+                if cmd == "/login" and args == PASSWORD:
+                    authorize(chat_id)
+                    send_message(chat_id, "🔓 Accès autorisé !\n\nCommandes :\n/add WALLET\n/remove WALLET\n/list\n/my")
+                    continue
+                if not is_authorized(chat_id):
+                    send_message(chat_id, f"🔐 Connecte-toi : /login {PASSWORD}")
+                    continue
+
                 if cmd == "/add" and args:
-                    w = args.strip()
-                    if len(w) < 32:
-                        send_message(cid, "Wallet invalide")
+                    wallet = args.strip()
+                    if len(wallet) < 32:
+                        send_message(chat_id, "⚠️ Wallet invalide.")
                         continue
-                    cur = load_list(WALLETS_FILE)
-                    if w not in cur:
-                        cur.append(w)
-                        save_list(WALLETS_FILE, cur)
-                    if w not in subs: subs[w] = []
-                    if cid not in subs[w]:
-                        subs[w].append(cid)
+                    if wallet not in subs:
+                        subs[wallet] = []
+                    if chat_id not in subs[wallet]:
+                        subs[wallet].append(chat_id)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(cid, f"Suivi : <code>{w}</code>")
+                        send_message(chat_id, f"👀 Suivi activé pour <code>{wallet}</code>")
+                    else:
+                        send_message(chat_id, f"✅ Déjà abonné à <code>{wallet}</code>")
+
+                elif cmd == "/remove" and args:
+                    wallet = args.strip()
+                    if wallet in subs and chat_id in subs[wallet]:
+                        subs[wallet].remove(chat_id)
+                        save_json(SUBSCRIPTIONS_FILE, subs)
+                        send_message(chat_id, f"❌ Suivi arrêté pour <code>{wallet}</code>")
+                    else:
+                        send_message(chat_id, "Pas d'abonnement trouvé.")
+
+                elif cmd == "/list":
+                    wallets = list(subs.keys())
+                    if not wallets:
+                        send_message(chat_id, "Aucun wallet suivi.")
+                    else:
+                        msg = "<b>📜 Wallets suivis :</b>\n" + "\n".join(wallets)
+                        send_message(chat_id, msg)
+
                 elif cmd == "/my":
-                    mine = [w for w, u in subs.items() if cid in u]
-                    send_message(cid, "\n".join([f"• <code>{w}</code>" for w in mine]) or "Aucun")
+                    my = [w for w, users in subs.items() if chat_id in users]
+                    if my:
+                        send_message(chat_id, "<b>👤 Tes abonnements :</b>\n" + "\n".join(my))
+                    else:
+                        send_message(chat_id, "Tu n'es abonné à aucun wallet.")
         except Exception as e:
-            print(f"Bot err: {e}")
+            print(f"[Bot] Erreur : {e}")
             time.sleep(5)
 
-# === FLASK ===
-app = Flask(__name__)
-@app.route("/"): return "Bot ON"
-@app.route("/health"): return "OK", 200
-
-# === DEMARRAGE ===
+# === MAIN ===
 if __name__ == "__main__":
-    pre_authorize()
-    threading.Thread(target=force_test, daemon=True).start()
-    threading.Thread(target=tracker, daemon=True).start()
+    print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
