@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: solana-bot
+    env: python
+    buildCommand: pip install requests flask
+    startCommand: python tracker_bot.py
+    envVars:
+      HELIUS_API_KEY: "c888ba69-de31-43b7-b6c6-f6f841351f56"
+      BOT_TOKEN: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+      PASSWORD: "Business2026$"
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
