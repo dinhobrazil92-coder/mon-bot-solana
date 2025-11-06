@@ -2,13 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Bot Telegram Tracker Solana
-Fonctionnalités :
-- /login
-- /add <wallet>
-- /remove <wallet>
-- /list
-- /my
-- Notifications : ACHAT / VENTE / CRÉATION DE TOKEN
+Detecte : ACHAT / VENTE / CREATION DE TOKEN
+Fonctionnalites : /login, /add, /remove, /list, /my
 Helius RPC + Render
 """
 import os
@@ -16,7 +11,6 @@ import time
 import threading
 import json
 import requests
-import html
 from datetime import datetime
 from flask import Flask
 
@@ -105,20 +99,20 @@ def authorize(chat_id):
 # === TEMPLATES ===
 def default_templates():
     return {
-        "access_granted": "Accès autorisé !\n\nCommandes :\n/add WALLET → suivre\n/remove WALLET → arrêter\n/list → tous les wallets\n/my → mes abonnements",
+        "access_granted": "Acces autorise !\n\nCommandes :\n/add WALLET\n/remove WALLET\n/list\n/my",
         "must_login": "Connecte-toi :\n<code>/login {password}</code>",
-        "now_following": "Suivi activé : <code>{wallet}</code>",
+        "now_following": "Suivi : <code>{wallet}</code>",
         "wallet_invalid": "Wallet invalide.",
         "no_wallets": "Aucun wallet suivi.",
         "my_subs_none": "Aucun abonnement.",
         "tx_detected": "<b>{action}</b>\n\n"
-                       "<a href=\"{link}\">Voir sur Solscan</a>\n"
+                       "<a href=\"{link}\">Voir tx</a>\n"
                        "Wallet: <code>{wallet}</code>\n"
                        "Token: <code>{mint}</code>\n"
                        "Montant: <code>{amount}</code>\n"
                        "Heure: <code>{time}</code>",
-        "token_created": "NOUVEAU TOKEN CRÉÉ !\n\n"
-                         "<a href=\"{link}\">Voir sur Solscan</a>\n"
+        "token_created": "NOUVEAU TOKEN CREE !\n\n"
+                         "<a href=\"{link}\">Voir tx</a>\n"
                          "Wallet: <code>{wallet}</code>\n"
                          "Mint: <code>{mint}</code>\n"
                          "Heure: <code>{time}</code>"
@@ -146,7 +140,7 @@ def send_message(chat_id, text):
         if resp.status_code != 200:
             print(f"[TG] Erreur {resp.status_code}: {resp.text}")
         else:
-            print(f"[TG] Envoyé à {chat_id}")
+            print(f"[TG] Envoye a {chat_id}")
     except Exception as e:
         print(f"[TG] Exception: {e}")
 
@@ -156,9 +150,9 @@ def auto_test():
     auth = load_json(AUTHORIZED_FILE)
     if auth:
         for cid in auth:
-            send_message(cid, "BOT DÉMARRÉ !\n\nTest OK.\nUtilise /add <wallet>")
+            send_message(cid, "BOT DEMARRE !\n\nTest OK.\nUtilise /add <wallet>")
     else:
-        print("[TEST] Aucun utilisateur autorisé")
+        print("[TEST] Aucun utilisateur autorise")
 
 # === HELIUS RPC ===
 HELIUS_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
@@ -235,7 +229,7 @@ def detect_token_transfer(tx, wallet):
 
 # === TRACKER ===
 def tracker():
-    print("[Tracker] Démarré")
+    print("[Tracker] Demarre")
     seen = load_set(SEEN_FILE)
     while True:
         try:
@@ -257,7 +251,7 @@ def tracker():
                         save_set(SEEN_FILE, seen)
                         continue
 
-                    # Création
+                    # Creation
                     creation = detect_token_creation(tx, wallet)
                     if creation:
                         msg = get_template("token_created").format(
@@ -305,7 +299,7 @@ def tracker():
 
 # === BOT TELEGRAM ===
 def bot():
-    print("[Bot] Polling démarré")
+    print("[Bot] Polling demarre")
     offset = load_update_id()
     while True:
         try:
@@ -361,7 +355,7 @@ def bot():
                         if not subs[w]:
                             del subs[w]
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(chat_id, f"Arrêt suivi : <code>{w}</code>")
+                        send_message(chat_id, f"Arret suivi : <code>{w}</code>")
                     else:
                         send_message(chat_id, "Pas suivi.")
 
@@ -371,7 +365,7 @@ def bot():
                         txt = "<b>Wallets suivis :</b>\n\n"
                         for w in wallets:
                             count = len([u for u in subs.get(w, []) if is_authorized(u)])
-                            txt += f"• <code>{w}</code> ({count} abonnés)\n"
+                            txt += f"• <code>{w}</code> ({count} abonnes)\n"
                         send_message(chat_id, txt)
                     else:
                         send_message(chat_id, get_template("no_wallets"))
@@ -388,7 +382,7 @@ def bot():
             print(f"[Bot] Erreur: {e}")
             time.sleep(5)
 
-# === FLASK ===
+# === FLASK (CORRIGE) ===
 app = Flask(__name__)
 
 @app.route("/")
@@ -399,9 +393,9 @@ def index():
 def health():
     return "OK", 200
 
-# === DÉMARRAGE ===
+# === DEMARRAGE ===
 if __name__ == "__main__":
-    print("Démarrage bot + test auto...")
+    print("Demarrage bot + test auto...")
     threading.Thread(target=auto_test, daemon=True).start()
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
