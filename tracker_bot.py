@@ -3,7 +3,8 @@
 
 """
 Bot Telegram - Tracker Solana (ACHAT/VENTE)
-Version finale prête pour Render avec notifications Telegram.
+Prêt pour Render Web Service avec mini serveur intégré.
+Notifications Telegram pour chaque transaction détectée.
 """
 
 import os
@@ -15,10 +16,10 @@ import html
 from datetime import datetime
 from flask import Flask
 
-# === CONFIG ===
-RPC_URL = os.getenv("RPC_URL", "").strip()
+# === CONFIG (préférer les ENV) ===
+RPC_URL = os.getenv("RPC_URL", "").strip()  # ex: https://api.mainnet-beta.solana.com
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-PASSWORD = os.getenv("PASSWORD", "Business2026$").strip()
+PASSWORD = os.getenv("PASSWORD", "Business2026$").strip()  # mettre en env sur Render
 
 # === FICHIERS LOCAUX ===
 WALLETS_FILE = "wallets.txt"
@@ -28,7 +29,7 @@ UPDATE_ID_FILE = "update_id.txt"
 AUTHORIZED_FILE = "authorized.json"
 TEMPLATES_FILE = "templates.json"
 
-# === UTILITAIRES ===
+# === UTILITAIRES FICHIER / JSON ===
 def load_json(file):
     try:
         with open(file, "r", encoding="utf-8") as f:
@@ -150,20 +151,28 @@ def rpc_post(payload):
         return None
 
 def get_signatures(wallet, limit=10):
-    payload = {"jsonrpc": "2.0", "id":1,"method":"getSignaturesForAddress","params":[wallet, {"limit": limit}]}
+    payload = {
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getSignaturesForAddress",
+        "params": [wallet, {"limit": limit}]
+    }
     res = rpc_post(payload)
     if not res:
         return []
     return res.get("result", [])
 
 def get_transaction(sig):
-    payload = {"jsonrpc":"2.0","id":1,"method":"getTransaction","params":[sig, {"encoding":"jsonParsed","maxSupportedTransactionVersion":0}]}
+    payload = {
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getTransaction",
+        "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
+    }
     res = rpc_post(payload)
     if not res:
         return None
     return res.get("result")
 
-# === DETECTION ACHAT / VENTE ===
+# === DÉTECTION ACHAT / VENTE ===
 TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 def extract_transfer_info(parsed):
@@ -176,7 +185,7 @@ def extract_transfer_info(parsed):
         dest = info.get("destination")
         mint = info.get("mint") or info.get("mintAccount") or info.get("token")
         if "tokenAmount" in info and isinstance(info.get("tokenAmount"), dict):
-            ta = info.get("tokenAmount")
+            ta = info.get("tokenAmount", {})
             amount = ta.get("amount")
             decimals = ta.get("decimals")
             if amount is not None and decimals is not None:
@@ -191,23 +200,28 @@ def find_token_transfer(tx, wallet, direction="in"):
         return None
     message = tx.get("transaction", {}).get("message", {})
     instructions = message.get("instructions", []) or []
-    all_instructions = instructions.copy()
+    token_transfers = []
+
+    all_instructions = []
+    for instr in instructions:
+        all_instructions.append(instr)
     meta = tx.get("meta", {}) or {}
     for inner_group in meta.get("innerInstructions", []) or []:
-        all_instructions.extend(inner_group.get("instructions", []))
-    token_transfers = []
+        for instr in inner_group.get("instructions", []) or []:
+            all_instructions.append(instr)
+
     for instr in all_instructions:
         program_id = instr.get("programId") or instr.get("programIdIndex")
-        if program_id == TOKEN_PROGRAM_ID or (isinstance(program_id,str) and TOKEN_PROGRAM_ID in program_id):
+        if program_id == TOKEN_PROGRAM_ID or (isinstance(program_id, str) and TOKEN_PROGRAM_ID in program_id):
             parsed = instr.get("parsed") or {}
             extracted = extract_transfer_info(parsed)
             if not extracted:
                 continue
-            source,dest,mint,amount = extracted
-            if direction=="in" and dest==wallet:
-                token_transfers.append({"mint":mint or "UNKNOWN","amount":amount,"type":"ACHAT"})
-            elif direction=="out" and source==wallet:
-                token_transfers.append({"mint":mint or "UNKNOWN","amount":amount,"type":"VENTE"})
+            source, dest, mint, amount = extracted
+            if direction == "in" and dest == wallet:
+                token_transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "ACHAT"})
+            elif direction == "out" and source == wallet:
+                token_transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "VENTE"})
     return token_transfers[0] if token_transfers else None
 
 # === TRACKER PRINCIPAL ===
@@ -228,26 +242,28 @@ def tracker():
                 tx = get_transaction(sig)
                 buy = find_token_transfer(tx, wallet, "in")
                 sell = find_token_transfer(tx, wallet, "out")
+
                 if buy or sell:
                     action_info = buy if buy else sell
-                    action = action_info.get("type","TX")
-                    mint = action_info.get("mint","UNKNOWN")
-                    amount_raw = action_info.get("amount",0)
-                    amount_display="?"
+                    action = action_info.get("type", "TX")
+                    mint = action_info.get("mint", "UNKNOWN")
+                    amount_raw = action_info.get("amount", 0)
+                    amount_display = "?"
                     try:
-                        if isinstance(amount_raw,dict):
-                            amt=amount_raw.get("amount")
-                            dec=amount_raw.get("decimals")
+                        if isinstance(amount_raw, dict):
+                            amt = amount_raw.get("amount")
+                            dec = amount_raw.get("decimals")
                             if amt is not None and dec is not None:
-                                amount_display=f"{int(amt)/(10**int(dec)):,}"
+                                amount_display = f"{int(amt) / (10 ** int(dec)):,}"
                         else:
-                            amount_display=f"{int(amount_raw)/1_000_000:,}"
-                    except:
-                        amount_display=str(amount_raw)
-                    link=f"https://solscan.io/tx/{sig}"
-                    templates=load_templates()
-                    template=templates.get("tx_detected",default_templates().get("tx_detected"))
-                    message=template.format(
+                            amount_display = f"{int(amount_raw) / 1_000_000:,}"
+                    except Exception:
+                        amount_display = str(amount_raw)
+
+                    link = f"https://solscan.io/tx/{sig}"
+                    templates = load_templates()
+                    template = templates.get("tx_detected", default_templates().get("tx_detected"))
+                    message = template.format(
                         action=format_html_safe(action),
                         link=format_html_safe(link),
                         wallet=format_html_safe(wallet),
@@ -255,90 +271,84 @@ def tracker():
                         amount=format_html_safe(amount_display),
                         time=format_html_safe(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
                     )
-                    subs=load_json(SUBSCRIPTIONS_FILE)
-                    subscribers=subs.get(wallet,[]) or []
+
+                    subs = load_json(SUBSCRIPTIONS_FILE)
+                    subscribers = subs.get(wallet, []) or []
                     for chat_id in subscribers:
                         if is_authorized(chat_id):
-                            send_message(chat_id,message)
+                            send_message(chat_id, message)
+
                 seen.add(sig)
-                save_set(SEEN_FILE,seen)
+                save_set(SEEN_FILE, seen)
         time.sleep(15)
 
 # === BOT TELEGRAM ===
 def bot():
+    print("[bot] démarrage du bot Telegram...")
     offset = load_update_id()
     while True:
         try:
-            resp = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates", params={"offset":offset,"timeout":30}).json()
-            updates = resp.get("result",[])
+            resp = requests.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
+                params={"offset": offset, "timeout": 30}
+            ).json()
+            updates = resp.get("result", []) or []
+
             for update in updates:
                 offset = update["update_id"] + 1
                 save_update_id(offset)
-                msg = update.get("message",{})
-                chat_id = msg.get("chat",{}).get("id")
-                text = msg.get("text","")
+                msg = update.get("message") or {}
+                chat_id = msg.get("chat", {}).get("id")
+                text = msg.get("text", "") or ""
                 if not chat_id or not text or not text.startswith("/"):
                     continue
                 cmd = text.split()[0].lower()
                 args = " ".join(text.split()[1:]).strip()
                 templates = load_templates()
-                # /login
-                if cmd=="/login":
-                    if args==PASSWORD:
+
+                if cmd == "/login":
+                    if args == PASSWORD:
                         authorize_user(chat_id)
-                        send_message(chat_id,templates.get("access_granted"))
+                        send_message(chat_id, templates.get("access_granted"))
                     else:
-                        send_message(chat_id,templates.get("access_denied"))
+                        send_message(chat_id, templates.get("access_denied"))
                     continue
+
                 if not is_authorized(chat_id):
-                    send_message(chat_id,templates.get("must_login").format(password=PASSWORD))
+                    send_message(chat_id, templates.get("must_login").format(password=PASSWORD))
                     continue
-                subs=load_json(SUBSCRIPTIONS_FILE)
-                if cmd=="/start":
-                    send_message(chat_id,templates.get("access_granted"))
-                elif cmd=="/add" and args:
-                    wallet=args.strip()
-                    if len(wallet)<32:
-                        send_message(chat_id,templates.get("wallet_invalid"))
+
+                subs = load_json(SUBSCRIPTIONS_FILE)
+                if cmd == "/start":
+                    send_message(chat_id, templates.get("access_granted"))
+                elif cmd == "/add" and args:
+                    wallet = args.strip()
+                    if len(wallet) < 32:
+                        send_message(chat_id, templates.get("wallet_invalid"))
                         continue
-                    current=load_list(WALLETS_FILE)
+                    current = load_list(WALLETS_FILE)
                     if wallet not in current:
                         current.append(wallet)
-                        save_list(WALLETS_FILE,current)
+                        save_list(WALLETS_FILE, current)
                     if wallet not in subs:
-                        subs[wallet]=[]
+                        subs[wallet] = []
                     if chat_id not in subs[wallet]:
                         subs[wallet].append(chat_id)
-                        save_json(SUBSCRIPTIONS_FILE,subs)
-                        send_message(chat_id,templates.get("now_following").format(wallet=wallet))
+                        save_json(SUBSCRIPTIONS_FILE, subs)
+                        send_message(chat_id, templates.get("now_following").format(wallet=wallet))
                     else:
-                        send_message(chat_id,templates.get("already_followed"))
-                elif cmd=="/list":
-                    wallets=load_list(WALLETS_FILE)
+                        send_message(chat_id, templates.get("already_followed"))
+                elif cmd == "/list":
+                    wallets = load_list(WALLETS_FILE)
                     if wallets:
-                        txt="<b>Wallets suivis :</b>\n\n"
+                        txt = "<b>Wallets suivis :</b>\n\n"
                         for w in wallets:
-                            count=len([u for u in subs.get(w,[]) if is_authorized(u)])
-                            txt+=f"• <code>{w}</code> ({count} abonnés)\n"
-                        send_message(chat_id,txt)
+                            count = len([u for u in subs.get(w, []) if is_authorized(u)])
+                            txt += f"• <code>{w}</code> ({count} abonnés)\n"
+                        send_message(chat_id, txt)
                     else:
-                        send_message(chat_id,templates.get("no_wallets"))
-                elif cmd=="/my":
-                    my=[w for w,users in subs.items() if chat_id in users]
+                        send_message(chat_id, templates.get("no_wallets"))
+                elif cmd == "/my":
+                    my = [w for w, users in subs.items() if chat_id in users]
                     if my:
-                        txt="<b>Tes abonnements :</b>\n\n"
-                        for w in my:
-                            txt+=f"• <code>{w}</code>\n"
-                        send_message(chat_id,txt)
-                    else:
-                        send_message(chat_id,templates.get("my_subs_none"))
-                elif cmd=="/remove" and args:
-                    wallet=args.strip()
-                    if wallet in subs and chat_id in subs[wallet]:
-                        subs[wallet].remove(chat_id)
-                        if not subs[wallet]:
-                            del subs[wallet]
-                        save_json(SUBSCRIPTIONS_FILE,subs)
-                        send_message(chat_id,f"✅ Plus suivi :\n<code>{wallet}</code>")
-                    else:
-                        send_message(chat_id,"❌ Pas suivi.
+                        txt = "<
