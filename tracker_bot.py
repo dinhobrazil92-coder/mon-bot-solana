@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram + Tracker Solana via HELIUS RPC
-Prêt pour Render + Disque persistant
+Bot Telegram + Tracker Solana via HELIUS
+100% compatible Render + Disque persistant
 """
 import os
 import time
@@ -29,21 +29,43 @@ SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
 UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
 AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
 
-# === HELIUS RPC URL ===
+# === HELIUS RPC ===
 HELIUS_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
 # === UTILITAIRES ===
-def load_json(file): return json.load(open(file, "r", encoding="utf-8")) if os.path.exists(file) else {}
-def save_json(file, data): json.dump(data, open(file, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
-def load_list(file): return [l.strip() for l in open(file, "r", encoding="utf-8").readlines() if l.strip()] if os.path.exists(file) else []
-def save_list(file, data): open(file, "w", encoding="utf-8").write("\n".join(data) + "\n")
+def load_json(file):
+    if not os.path.exists(file): return {}
+    try: return json.load(open(file, "r", encoding="utf-8"))
+    except: return {}
+
+def save_json(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def load_list(file):
+    if not os.path.exists(file): return []
+    return [l.strip() for l in open(file, "r", encoding="utf-8") if l.strip()]
+
+def save_list(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        f.write("\n".join(data) + "\n")
+
 def load_set(file): return set(load_list(file))
 def save_set(file, data): save_list(file, list(data))
-def load_update_id(): return int(open(UPDATE_ID_FILE).read().strip()) if os.path.exists(UPDATE_ID_FILE) else 0
-def save_update_id(uid): open(UPDATE_ID_FILE, "w").write(str(uid))
+
+def load_update_id():
+    if not os.path.exists(UPDATE_ID_FILE): return 0
+    try: return int(open(UPDATE_ID_FILE).read().strip())
+    except: return 0
+
+def save_update_id(uid):
+    with open(UPDATE_ID_FILE, "w") as f:
+        f.write(str(uid))
 
 # === AUTH ===
-def is_authorized(chat_id): return str(chat_id) in load_json(AUTHORIZED_FILE)
+def is_authorized(chat_id):
+    return str(chat_id) in load_json(AUTHORIZED_FILE)
+
 def authorize_user(chat_id):
     data = load_json(AUTHORIZED_FILE)
     data[str(chat_id)] = True
@@ -52,19 +74,22 @@ def authorize_user(chat_id):
 # === TEMPLATES ===
 def default_templates():
     return {
-        "tx_detected": "🚨 <b>{action} DÉTECTÉ !</b>\n\n"
-                       "🔗 <a href=\"{link}\">Voir sur Solscan</a>\n"
-                       "👤 Wallet: <code>{wallet}</code>\n"
-                       "🪙 Token: <code>{mint}</code>\n"
-                       "💸 Montant: <code>{amount}</code>\n"
-                       "🕒 Heure: <code>{time}</code>",
-        "access_granted": "✅ Accès autorisé !\nUtilise /add <wallet>",
-        "must_login": "🔒 /login {password}",
-        "now_following": "✅ Suivi : <code>{wallet}</code>",
-        "wallet_invalid": "⚠️ Wallet invalide (min 32 caractères).",
-        "no_wallets": "Aucun wallet suivi."
+        "tx_detected": "ALERTE <b>{action} DÉTECTÉ !</b>\n\n"
+                       "Lien <a href=\"{link}\">Voir sur Solscan</a>\n"
+                       "Wallet: <code>{wallet}</code>\n"
+                       "Token: <code>{mint}</code>\n"
+                       "Montant: <code>{amount}</code>\n"
+                       "Heure: <code>{time}</code>",
+        "access_granted": "Accès autorisé !\nUtilise /add <wallet>",
+        "must_login": "Connecte-toi :\n<code>/login {password}</code>",
+        "now_following": "Suivi activé : <code>{wallet}</code>",
+        "wallet_invalid": "Wallet invalide (min 32 caractères).",
+        "no_wallets": "Aucun wallet suivi.",
+        "my_subs_none": "Aucun abonnement."
     }
-def load_templates(): return load_json("templates.json") or default_templates()
+
+def load_templates():
+    return load_json("templates.json") or default_templates()
 
 # === TELEGRAM ===
 def send_message(chat_id, text):
@@ -72,20 +97,27 @@ def send_message(chat_id, text):
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
+            data={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            },
             timeout=10
         )
-    except: pass
+    except Exception as e:
+        print(f"[send_message] Erreur: {e}")
 
-# === HELIUS RPC (corrigé) ===
-def rpc_post(method, params=[]):
+# === HELIUS RPC ===
+def rpc_post(method, params=None):
+    if params is None: params = []
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
         r = requests.post(HELIUS_URL, json=payload, timeout=15)
         r.raise_for_status()
         return r.json().get("result")
     except Exception as e:
-        print(f"[RPC ERROR] {method}: {e}")
+        print(f"[RPC] {method} erreur: {e}")
         return None
 
 def get_signatures(wallet, limit=10):
@@ -113,22 +145,24 @@ def find_token_transfer(tx, wallet):
 
         source = info.get("source")
         dest = info.get("destination")
-        mint = info.get("mint") or info.get("mintAccount")
+        mint = info.get("mint") or info.get("mintAccount") or "?"
         amount = info.get("amount")
-        if "tokenAmount" in info:
+        decimals = None
+
+        if "tokenAmount" in info and isinstance(info["tokenAmount"], dict):
             ta = info["tokenAmount"]
             amount = ta.get("amount")
             decimals = ta.get("decimals")
 
         if dest == wallet:
-            return {"type": "ACHAT", "mint": mint or "?", "amount": amount, "decimals": decimals}
+            return {"type": "ACHAT", "mint": mint, "amount": amount, "decimals": decimals}
         if source == wallet:
-            return {"type": "VENTE", "mint": mint or "?", "amount": amount, "decimals": decimals}
+            return {"type": "VENTE", "mint": mint, "amount": amount, "decimals": decimals}
     return None
 
 # === TRACKER ===
 def tracker():
-    print("Tracker démarré (Helius)")
+    print("[Tracker] Démarré")
     seen = load_set(SEEN_FILE)
     while True:
         try:
@@ -140,28 +174,33 @@ def tracker():
             for wallet in wallets:
                 sigs = get_signatures(wallet, limit=10)
                 for s in sigs:
-                    sig = s["signature"]
-                    if sig in seen: continue
+                    sig = s.get("signature")
+                    if not sig or sig in seen: continue
 
                     tx = get_transaction(sig)
                     transfer = find_token_transfer(tx, wallet)
                     if transfer:
-                        amount = transfer["amount"]
+                        amount_raw = transfer["amount"]
                         try:
                             if transfer.get("decimals") is not None:
-                                amount = f"{int(amount) / (10 ** int(transfer['decimals'])):,.8f}".rstrip("0").rstrip(".")
+                                amt = int(amount_raw)
+                                dec = int(transfer["decimals"])
+                                amount = f"{amt / (10 ** dec):,.8f}".rstrip("0").rstrip(".")
                             else:
-                                amount = f"{int(amount) / 1_000_000_000:,.2f}"
-                        except: amount = str(amount)
+                                amount = f"{int(amount_raw) / 1_000_000_000:,.2f}"
+                        except:
+                            amount = str(amount_raw)
 
-                        msg = default_templates()["tx_detected"].format(
+                        templates = default_templates()
+                        msg = templates["tx_detected"].format(
                             action=transfer["type"],
                             link=f"https://solscan.io/tx/{sig}",
                             wallet=wallet[:8] + "..." + wallet[-6:],
                             mint=transfer["mint"][:8] + "..." + transfer["mint"][-6:],
                             amount=amount,
-                            time=datetime.utcnow().strftime("%H:%M:%S")
+                            time=datetime.utcnow().strftime("%H:%M:%S UTC")
                         )
+
                         subs = load_json(SUBSCRIPTIONS_FILE)
                         for chat_id in subs.get(wallet, []):
                             if is_authorized(chat_id):
@@ -169,21 +208,24 @@ def tracker():
 
                     seen.add(sig)
                     save_set(SEEN_FILE, seen)
-            time.sleep(15)
+
+            time.sleep(18)
         except Exception as e:
-            print(f"[Tracker error] {e}")
+            print(f"[Tracker] Erreur: {e}")
             time.sleep(10)
 
 # === BOT TELEGRAM ===
 def bot():
-    print("Bot Telegram démarré")
+    print("[Bot] Démarré (polling)")
     offset = load_update_id()
     while True:
         try:
-            updates = requests.get(
+            resp = requests.get(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-                params={"offset": offset, "timeout": 30}, timeout=40
-            ).json().get("result", [])
+                params={"offset": offset, "timeout": 30},
+                timeout=40
+            ).json()
+            updates = resp.get("result", [])
 
             for u in updates:
                 offset = u["update_id"] + 1
@@ -193,19 +235,21 @@ def bot():
                 text = (msg.get("text") or "").strip()
                 if not text.startswith("/"): continue
 
-                cmd, *args = text.split()
-                args = " ".join(args)
-                cmd = cmd.lower()
+                parts = text.split(maxsplit=1)
+                cmd = parts[0].lower()
+                args = parts[1] if len(parts) > 1 else ""
 
                 if cmd == "/login" and args == PASSWORD:
                     authorize_user(chat_id)
                     send_message(chat_id, default_templates()["access_granted"])
                     continue
+
                 if not is_authorized(chat_id):
                     send_message(chat_id, default_templates()["must_login"].format(password=PASSWORD))
                     continue
 
                 subs = load_json(SUBSCRIPTIONS_FILE)
+
                 if cmd == "/add" and args:
                     w = args.strip()
                     if len(w) < 32:
@@ -222,35 +266,30 @@ def bot():
                         save_json(SUBSCRIPTIONS_FILE, subs)
                         send_message(chat_id, default_templates()["now_following"].format(wallet=w))
                 elif cmd == "/my":
-                    my = [w for w, u in subs.items() if chat_id in u]
-                    send_message(chat_id, "\n".join([f"• <code>{w}</code>" for w in my]) or "Aucun")
+                    my = [w for w, users in subs.items() if chat_id in users]
+                    if my:
+                        txt = "<b>Tes abonnements :</b>\n" + "\n".join(f"• <code>{w}</code>" for w in my)
+                        send_message(chat_id, txt)
+                    else:
+                        send_message(chat_id, default_templates()["my_subs_none"])
         except Exception as e:
-            print(f"[Bot error] {e}")
+            print(f"[Bot] Erreur: {e}")
             time.sleep(5)
 
-# === FLASK ===
+# === FLASK (CORRIGÉ) ===
 app = Flask(__name__)
-@app.route("/"); return "Bot actif"
-@app.route("/health"); return "OK", 200
+
+@app.route("/")
+def index():
+    return "Bot Solana Tracker ACTIF (Helius + Telegram)"
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 # === MAIN ===
 if __name__ == "__main__":
+    print("Démarrage du bot sur Render...")
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
-    app.run(host="0.0.0.0", port=PORT)
-
-render.yaml
-yamlservices:
-  - type: web
-    name: solana-bot
-    env: python
-    buildCommand: pip install requests flask
-    startCommand: python bot.py
-    envVars:
-      HELIUS_API_KEY: "c888ba69-de31-43b7-b6c6-f6f841351f56"
-      BOT_TOKEN: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
-      PASSWORD: "Business2026$"
-    disk:
-      name: data
-      mountPath: /app/data
-      sizeGB: 1
+    app.run(host="0.0.0.0", port=PORT, use_reloader=False)
