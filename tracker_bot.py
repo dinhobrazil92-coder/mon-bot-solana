@@ -1,17 +1,9 @@
-Voici la version 100 % corrigée — plus d’erreur de syntaxe à la ligne 203 — prête à déployer sur Render.
-
-Erreur : invalid syntax (line 203)
-C’est cette ligne qui cassait :
-python@app.route("/"): return "Bot ON"
-→ Manque de def + indentation → Flask ne peut pas parser.
-
-Fichier tracker_bot.py — VERSION FINALE & FONCTIONNELLE
-python#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Bot Solana + Telegram (Helius)
-+ TEST NOTIFICATION AUTO
-+ Flask CORRIGÉ
++ Test auto au démarrage
++ Flask corrigé
 """
 import os
 import time
@@ -30,6 +22,7 @@ PORT = int(os.getenv("PORT", 10000))
 # === DATA ===
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
+
 AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
 SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
 WALLETS_FILE = f"{DATA_DIR}/wallets.txt"
@@ -38,28 +31,33 @@ UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
 
 # === FICHIERS UTILS ===
 def load_json(f):
-    return json.load(open(f, "r", "utf-8")) if os.path.exists(f) else {}
+    if not os.path.exists(f): return {}
+    try: return json.load(open(f, "r", encoding="utf-8"))
+    except: return {}
 
 def save_json(f, d):
-    json.dump(d, open(f, "w", "utf-8"), indent=2, ensure_ascii=False)
+    with open(f, "w", encoding="utf-8") as file:
+        json.dump(d, file, indent=2, ensure_ascii=False)
 
 def load_list(f):
-    return [l.strip() for l in open(f, "r", "utf-8")] if os.path.exists(f) else []
+    if not os.path.exists(f): return []
+    return [l.strip() for l in open(f, "r", encoding="utf-8") if l.strip()]
 
 def save_list(f, d):
-    open(f, "w", "utf-8").write("\n".join(d) + "\n")
+    with open(f, "w", encoding="utf-8") as file:
+        file.write("\n".join(d) + "\n")
 
-def load_set(f):
-    return set(load_list(f))
-
-def save_set(f, d):
-    save_list(f, list(d))
+def load_set(f): return set(load_list(f))
+def save_set(f, d): save_list(f, list(d))
 
 def load_update_id():
-    return int(open(UPDATE_ID_FILE).read().strip()) if os.path.exists(UPDATE_ID_FILE) else 0
+    if not os.path.exists(UPDATE_ID_FILE): return 0
+    try: return int(open(UPDATE_ID_FILE).read().strip())
+    except: return 0
 
 def save_update_id(i):
-    open(UPDATE_ID_FILE, "w").write(str(i))
+    with open(UPDATE_ID_FILE, "w") as file:
+        file.write(str(i))
 
 # === AUTH ===
 def is_authorized(cid):
@@ -70,7 +68,7 @@ def authorize(cid):
     d[str(cid)] = True
     save_json(AUTHORIZED_FILE, d)
 
-# === TELEGRAM SEND ===
+# === TELEGRAM ===
 def send_message(chat_id, text):
     if not BOT_TOKEN:
         print("BOT_TOKEN manquant")
@@ -82,20 +80,20 @@ def send_message(chat_id, text):
             timeout=10
         )
         if r.status_code != 200:
-            print(f"TG ERROR {r.status_code}: {r.text}")
+            print(f"Erreur TG {r.status_code}: {r.text}")
         else:
-            print(f"Envoyé à {chat_id}")
+            print(f"Message envoyé à {chat_id}")
     except Exception as e:
-        print(f"TG EXCEPTION: {e}")
+        print(f"Exception envoi: {e}")
 
 # === TEST AUTO ===
 def auto_test():
     time.sleep(8)
-    print("TEST AUTO NOTIFICATION...")
+    print("Lancement test notification...")
     auth = load_json(AUTHORIZED_FILE)
     if auth:
         for cid in auth:
-            send_message(cid, "BOT DÉMARRÉ !\n\nTest OK.\nUtilise /add <wallet>")
+            send_message(cid, "BOT DÉMARRÉ !\n\nTest réussi.\nUtilise /add <wallet>")
     else:
         print("Aucun utilisateur autorisé")
 
@@ -109,7 +107,7 @@ def rpc(method, params=None):
         r.raise_for_status()
         return r.json().get("result")
     except Exception as e:
-        print(f"RPC ERROR {method}: {e}")
+        print(f"RPC erreur {method}: {e}")
         return None
 
 def get_signatures(w, l=10):
@@ -167,7 +165,7 @@ def tracker():
                             amount = f"{amt:,.8f}".rstrip("0").rstrip(".")
                         except:
                             amount = str(t["amount"])
-                        msg = f"<b>{t['type']}</b>\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>\n<code>{amount}</code>"
+                        msg = f"<b>{t['type']}</b>\n<a href=\"https://solscan.io/tx/{sig}\">Voir tx</a>\n<code>{w[:8]}...{w[-6:]}</code>\n<code>{amount}</code>"
                         subs = load_json(SUBSCRIPTIONS_FILE)
                         for cid in subs.get(w, []):
                             if is_authorized(cid):
@@ -198,7 +196,7 @@ def bot():
 
                 if cmd == "/login" and args == PASSWORD:
                     authorize(cid)
-                    send_message(cid, "Accès OK !\n/add <wallet>")
+                    send_message(cid, "Accès autorisé !\n/add <wallet>")
                     continue
                 if not is_authorized(cid):
                     send_message(cid, f"/login {PASSWORD}")
@@ -218,10 +216,10 @@ def bot():
                     if cid not in subs[w]:
                         subs[w].append(cid)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(cid, f"Suivi : <code>{w}</code>")
+                        send_message(cid, f"Suivi activé : <code>{w}</code>")
                 elif cmd == "/my":
                     mine = [w for w, u in subs.items() if cid in u]
-                    send_message(cid, "\n".join([f"• <code>{w}</code>" for w in mine]) or "Aucun")
+                    send_message(cid, "\n".join([f"• <code>{w}</code>" for w in mine]) or "Aucun abonnement")
         except Exception as e:
             print(f"Bot erreur: {e}")
             time.sleep(5)
