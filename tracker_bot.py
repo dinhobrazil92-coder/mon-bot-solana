@@ -3,8 +3,7 @@
 
 """
 Bot Telegram - Tracker Solana (ACHAT/VENTE)
-Version complète fournie — utilise templates.json pour personnaliser les messages.
-Sécurité : utilise les variables d'environnement BOT_TOKEN, RPC_URL et PASSWORD.
+Version corrigée : logs, normalisation chat_id, envoi pour chaque transfert detected.
 """
 
 import os
@@ -15,12 +14,12 @@ import requests
 import html
 from datetime import datetime
 
-# === CONFIG (préférer les ENV) ===
-RPC_URL = os.getenv("RPC_URL", "").strip()  # ex: https://api.mainnet-beta.solana.com
+# === CONFIG (ENV) ===
+RPC_URL = os.getenv("RPC_URL", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-PASSWORD = os.getenv("PASSWORD", "Business2026$").strip()  # changer / mettre en env sur Render
+PASSWORD = os.getenv("PASSWORD", "Business2026$").strip()
 
-# === FICHIERS LOCAUX ===
+# === FILES ===
 WALLETS_FILE = "wallets.txt"
 SEEN_FILE = "seen.txt"
 SUBSCRIPTIONS_FILE = "subscriptions.json"
@@ -28,7 +27,7 @@ UPDATE_ID_FILE = "update_id.txt"
 AUTHORIZED_FILE = "authorized.json"
 TEMPLATES_FILE = "templates.json"
 
-# === UTILITAIRES FICHIER / JSON ===
+# === HELPERS FILE / JSON ===
 def load_json(file):
     try:
         with open(file, "r", encoding="utf-8") as f:
@@ -75,15 +74,17 @@ def save_update_id(uid):
     with open(UPDATE_ID_FILE, "w", encoding="utf-8") as f:
         f.write(str(uid))
 
-# === AUTHORIZATION ===
+# === AUTH ===
 def load_authorized():
-    return load_json(AUTHORIZED_FILE)
+    # ensure keys are strings
+    data = load_json(AUTHORIZED_FILE)
+    return {str(k): v for k, v in (data.items() if isinstance(data, dict) else [])}
 
 def save_authorized(data):
-    save_json(AUTHORIZED_FILE, data)
+    save_json(AUTHORIZED_FILE, {str(k): v for k, v in data.items()})
 
 def is_authorized(chat_id):
-    # authorized.json stores keys as strings
+    # accepts int or str; checks string-keyed dict
     return str(chat_id) in load_authorized()
 
 def authorize_user(chat_id):
@@ -91,18 +92,33 @@ def authorize_user(chat_id):
     data[str(chat_id)] = True
     save_authorized(data)
 
+# === SUBSCRIPTIONS helper (normalize chat ids to strings) ===
+def load_subscriptions():
+    data = load_json(SUBSCRIPTIONS_FILE)
+    if not isinstance(data, dict):
+        return {}
+    # normalize chat ids to strings
+    out = {}
+    for wallet, lst in data.items():
+        if not isinstance(lst, list):
+            continue
+        out[str(wallet)] = [str(x) for x in lst]
+    return out
+
+def save_subscriptions(subs):
+    # ensure wallet keys are strings and lists of strings
+    out = {}
+    for w, lst in subs.items():
+        out[str(w)] = [str(x) for x in lst]
+    save_json(SUBSCRIPTIONS_FILE, out)
+
 # === TEMPLATES ===
 def default_templates():
     return {
         "access_granted": "✅ <b>Accès autorisé !</b>\n\nTu peux maintenant utiliser le bot.\n\nCommandes :\n/add WALLET → suivre\n/list → voir les wallets\n/my → mes abonnements\n/remove WALLET → arrêter",
         "access_denied": "⛔ Mot de passe incorrect.",
         "must_login": "🔒 Tu dois te connecter :\n<code>/login {password}</code>",
-        "tx_detected": "🚨 <b>{action} DÉTECTÉ !</b>\n\n"
-                       "🔗 <a href=\"{link}\">Voir transaction</a>\n"
-                       "👤 Wallet: <code>{wallet}</code>\n"
-                       "🪙 Token (mint): <code>{mint}</code>\n"
-                       "💸 Montant: <code>{amount}</code>\n"
-                       "🕒 Heure: <code>{time}</code>\n",
+        "tx_detected": "🚨 <b>{action} DÉTECTÉ !</b>\n\n🔗 <a href=\"{link}\">Voir transaction</a>\n👤 Wallet: <code>{wallet}</code>\n🪙 Token (mint): <code>{mint}</code>\n💸 Montant: <code>{amount}</code>\n🕒 Heure: <code>{time}</code>\n",
         "already_followed": "ℹ️ Déjà suivi.",
         "now_following": "✅ Tu suis :\n<code>{wallet}</code>",
         "wallet_invalid": "⚠️ Wallet invalide.",
@@ -120,11 +136,11 @@ def load_templates():
 def format_html_safe(s):
     return html.escape(str(s))
 
-# === TELEGRAM SEND ===
+# === TELEGRAM SEND (improved logging) ===
 def send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True):
     if not BOT_TOKEN:
         print("[send_message] BOT_TOKEN non défini.")
-        return
+        return False
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
         resp = requests.post(url, data={
@@ -132,12 +148,14 @@ def send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": disable_web_page_preview
-        }, timeout=10)
-        # debug minimal
+        }, timeout=15)
         if resp.status_code != 200:
-            print(f"[send_message] Erreur {resp.status_code}: {resp.text}")
+            print(f"[send_message] Erreur {resp.status_code}: {resp.text} (chat_id={chat_id})")
+            return False
+        return True
     except Exception as e:
-        print(f"[send_message error] {e}")
+        print(f"[send_message error] {e} (chat_id={chat_id})")
+        return False
 
 # === SOLANA RPC HELPERS ===
 def rpc_post(payload):
@@ -145,7 +163,7 @@ def rpc_post(payload):
         print("[rpc_post] RPC_URL non défini.")
         return None
     try:
-        r = requests.post(RPC_URL, json=payload, timeout=10)
+        r = requests.post(RPC_URL, json=payload, timeout=15)
         return r.json()
     except Exception as e:
         print(f"[rpc_post error] {e}")
@@ -173,29 +191,24 @@ def get_transaction(sig):
         return None
     return res.get("result")
 
-# === DÉTECTION ACHAT / VENTE ===
+# === TRANSFER EXTRACTION ===
 TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 def extract_transfer_info(parsed):
-    """
-    Retourne (source, dest, mint, amount_str) si c'est un transfer, sinon None.
-    Gère types 'transfer' et 'transferChecked', et tokenAmount vs amount.
-    """
     if not parsed:
         return None
     ptype = parsed.get("type")
-    info = parsed.get("info", {})
+    info = parsed.get("info", {}) or {}
     if ptype in ("transfer", "transferChecked"):
         source = info.get("source")
         dest = info.get("destination")
         mint = info.get("mint") or info.get("mintAccount") or info.get("token")
-        # amount peut se trouver sous tokenAmount (object) ou amount
-        if "tokenAmount" in info and isinstance(info.get("tokenAmount"), dict):
+        # tokenAmount object handling
+        if isinstance(info.get("tokenAmount"), dict):
             ta = info.get("tokenAmount", {})
-            amount = ta.get("amount")  # string
+            amount = ta.get("amount")
             decimals = ta.get("decimals")
             if amount is not None and decimals is not None:
-                # renvoyer la raw (amount + /decimals seront traités plus tard)
                 return source, dest, mint, {"amount": amount, "decimals": decimals}
             return source, dest, mint, info.get("tokenAmount")
         else:
@@ -203,56 +216,48 @@ def extract_transfer_info(parsed):
             return source, dest, mint, amount
     return None
 
-def find_token_transfer(tx, wallet, direction="in"):
-    """
-    Cherche le premier transfert token lié au wallet dans la tx (inner instructions incluses).
-    direction: "in" pour réception, "out" pour envoi.
-    Renvoie dict ou None: {"mint":..., "amount":..., "type":"ACHAT"/"VENTE"}
-    """
+def find_all_token_transfers(tx, wallet):
+    """Retourne la liste de tous les transferts token impliquant wallet (in ou out)."""
     if not tx:
-        return None
-
-    message = tx.get("transaction", {}).get("message", {})
+        return []
+    transfers = []
+    message = tx.get("transaction", {}).get("message", {}) or {}
     instructions = message.get("instructions", []) or []
-    token_transfers = []
-
-    # collecter toutes les instructions (y compris innerInstructions)
-    all_instructions = []
-    for instr in instructions:
-        all_instructions.append(instr)
-        # innerInstructions peuvent se trouver dans "innerInstructions" de "meta"
-    # Certaines innerInstructions sont dans tx['meta']['innerInstructions']
+    all_instructions = list(instructions)
+    # inner instructions généralement dans tx['meta']['innerInstructions']
     meta = tx.get("meta", {}) or {}
     for inner_group in meta.get("innerInstructions", []) or []:
         for instr in inner_group.get("instructions", []) or []:
             all_instructions.append(instr)
-
-    # parcourir
     for instr in all_instructions:
+        # programId may be string or dict depending on RPC format; try to get string
         program_id = instr.get("programId") or instr.get("programIdIndex")
-        # normalisé pour string compare
-        if program_id == TOKEN_PROGRAM_ID or (isinstance(program_id, str) and TOKEN_PROGRAM_ID in program_id):
+        # normalize
+        if isinstance(program_id, dict):
+            program_id = program_id.get("toBase58") or program_id.get("pubkey") or str(program_id)
+        if not program_id:
+            continue
+        if TOKEN_PROGRAM_ID in str(program_id):
             parsed = instr.get("parsed") or {}
             extracted = extract_transfer_info(parsed)
             if not extracted:
                 continue
             source, dest, mint, amount = extracted
+            # if wallet equals dest -> incoming
+            if dest == wallet:
+                transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "ACHAT"})
+            if source == wallet:
+                transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "VENTE"})
+    return transfers
 
-            # normalize wallet compare (strings)
-            if direction == "in" and dest == wallet:
-                token_transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "ACHAT"})
-            elif direction == "out" and source == wallet:
-                token_transfers.append({"mint": mint or "UNKNOWN", "amount": amount, "type": "VENTE"})
-
-    return token_transfers[0] if token_transfers else None
-
-# === TRACKER PRINCIPAL ===
+# === TRACKER ===
 def tracker():
     print("[tracker] démarrage du tracker...")
     seen = load_set(SEEN_FILE)
     while True:
         wallets = load_list(WALLETS_FILE)
         if not wallets:
+            # nothing to do
             time.sleep(20)
             continue
 
@@ -263,6 +268,11 @@ def tracker():
                 print(f"[tracker] get_signatures error for {wallet}: {e}")
                 sigs = []
 
+            if not sigs:
+                # debug
+                # print(f"[tracker] Aucun signatures pour {wallet}")
+                pass
+
             for s in sigs:
                 sig = s.get("signature")
                 if not sig:
@@ -271,69 +281,85 @@ def tracker():
                     continue
 
                 tx = get_transaction(sig)
-                buy = find_token_transfer(tx, wallet, "in")
-                sell = find_token_transfer(tx, wallet, "out")
+                if not tx:
+                    # mark as seen anyway to avoid reprocessing bad txs repeatedly
+                    seen.add(sig)
+                    save_set(SEEN_FILE, seen)
+                    continue
 
-                if buy or sell:
-                    action_info = buy if buy else sell
-                    action = action_info.get("type", "TX")
-                    mint = action_info.get("mint", "UNKNOWN")
-                    amount_raw = action_info.get("amount", 0)
+                # find all transfers related to this wallet
+                transfers = find_all_token_transfers(tx, wallet)
 
-                    # conversion amount si format tokenAmount present
-                    amount_display = "?"
-                    try:
-                        if isinstance(amount_raw, dict):
-                            # attendu {amount: "1234", decimals: 6}
-                            amt = amount_raw.get("amount")
-                            dec = amount_raw.get("decimals")
-                            if amt is not None and dec is not None:
-                                amount_display = f"{int(amt) / (10 ** int(dec)):,}"
-                            else:
-                                # fallback: raw repr
-                                amount_display = str(amount_raw)
-                        else:
-                            # numeric or string
-                            try:
-                                amount_display = f"{int(amount_raw) / 1_000_000:,}"
-                            except Exception:
-                                try:
-                                    amount_display = str(float(amount_raw))
-                                except Exception:
-                                    amount_display = str(amount_raw)
-                    except Exception:
-                        amount_display = str(amount_raw)
+                if transfers:
+                    # debug print
+                    print(f"[tracker] {len(transfers)} transfert(s) trouvé(s) pour wallet {wallet} sig {sig}")
+                    subs = load_subscriptions()  # normalized: chat ids are strings
+                    subscribers = subs.get(str(wallet), []) or []
+                    print(f"[tracker] abonnés pour {wallet} => {subscribers}")
 
-                    link = f"https://solscan.io/tx/{sig}"
                     templates = load_templates()
                     template = templates.get("tx_detected", default_templates().get("tx_detected"))
-                    message = template.format(
-                        action=format_html_safe(action),
-                        link=format_html_safe(link),
-                        wallet=format_html_safe(wallet),
-                        mint=format_html_safe(mint),
-                        amount=format_html_safe(amount_display),
-                        time=format_html_safe(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
-                    )
 
-                    subs = load_json(SUBSCRIPTIONS_FILE)
-                    subscribers = subs.get(wallet, []) or []
-                    # envoyer à chaque abonné autorisé
-                    for chat_id in subscribers:
+                    for tr in transfers:
+                        action = tr.get("type", "TX")
+                        mint = tr.get("mint", "UNKNOWN")
+                        amount_raw = tr.get("amount", 0)
+
+                        # format amount display
+                        amount_display = "?"
                         try:
-                            if is_authorized(chat_id):
-                                send_message(chat_id, message)
-                        except Exception as e:
-                            print(f"[tracker] send_message error pour {chat_id}: {e}")
+                            if isinstance(amount_raw, dict):
+                                amt = amount_raw.get("amount")
+                                dec = amount_raw.get("decimals")
+                                if amt is not None and dec is not None:
+                                    amount_display = f"{int(amt) / (10 ** int(dec)):,}"
+                                else:
+                                    amount_display = str(amount_raw)
+                            else:
+                                try:
+                                    amount_display = f"{int(amount_raw) / 1_000_000:,}"
+                                except Exception:
+                                    try:
+                                        amount_display = str(float(amount_raw))
+                                    except Exception:
+                                        amount_display = str(amount_raw)
+                        except Exception:
+                            amount_display = str(amount_raw)
 
-                # marquer comme vu (même si pas pertinent), afin d'éviter reprocessing
+                        link = f"https://solscan.io/tx/{sig}"
+                        message = template.format(
+                            action=format_html_safe(action),
+                            link=format_html_safe(link),
+                            wallet=format_html_safe(wallet),
+                            mint=format_html_safe(mint),
+                            amount=format_html_safe(amount_display),
+                            time=format_html_safe(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
+                        )
+
+                        # send to each authorized subscriber
+                        for chat_id_str in subscribers:
+                            # ensure string form; send_message accepts either int or str
+                            try:
+                                # check authorization of this chat id
+                                if is_authorized(chat_id_str):
+                                    ok = send_message(chat_id_str, message)
+                                    print(f"[tracker] send_message to {chat_id_str} => {ok}")
+                                else:
+                                    print(f"[tracker] {chat_id_str} not authorized, skipping.")
+                            except Exception as e:
+                                print(f"[tracker] send_message error pour {chat_id_str}: {e}")
+                else:
+                    # debug: no transfers
+                    # print(f"[tracker] pas de transfert token pour {wallet} sig {sig}")
+                    pass
+
+                # mark seen
                 seen.add(sig)
                 save_set(SEEN_FILE, seen)
 
-        # pause entre boucles
         time.sleep(15)
 
-# === BOT TELEGRAM pour commandes ===
+# === TELEGRAM BOT COMMANDS ===
 def bot():
     print("[bot] démarrage du bot Telegram...")
     offset = load_update_id()
@@ -362,7 +388,6 @@ def bot():
 
                 cmd = text.split()[0].lower()
                 args = " ".join(text.split()[1:]).strip()
-
                 templates = load_templates()
 
                 # /login
@@ -380,7 +405,7 @@ def bot():
                     continue
 
                 # charger subscriptions
-                subs = load_json(SUBSCRIPTIONS_FILE)
+                subs = load_subscriptions()
 
                 if cmd == "/start":
                     send_message(chat_id, templates.get("access_granted"))
@@ -395,9 +420,11 @@ def bot():
                         save_list(WALLETS_FILE, current)
                     if wallet not in subs:
                         subs[wallet] = []
-                    if chat_id not in subs[wallet]:
-                        subs[wallet].append(chat_id)
-                        save_json(SUBSCRIPTIONS_FILE, subs)
+                    # store chat ids as strings
+                    cid = str(chat_id)
+                    if cid not in subs[wallet]:
+                        subs[wallet].append(cid)
+                        save_subscriptions(subs)
                         send_message(chat_id, templates.get("now_following").format(wallet=wallet))
                     else:
                         send_message(chat_id, templates.get("already_followed"))
@@ -412,7 +439,7 @@ def bot():
                     else:
                         send_message(chat_id, templates.get("no_wallets"))
                 elif cmd == "/my":
-                    my = [w for w, users in subs.items() if chat_id in users]
+                    my = [w for w, users in subs.items() if str(chat_id) in users]
                     if my:
                         txt = "<b>Tes abonnements :</b>\n\n"
                         for w in my:
@@ -422,11 +449,12 @@ def bot():
                         send_message(chat_id, templates.get("my_subs_none"))
                 elif cmd == "/remove" and args:
                     wallet = args.strip()
-                    if wallet in subs and chat_id in subs[wallet]:
-                        subs[wallet].remove(chat_id)
+                    cid = str(chat_id)
+                    if wallet in subs and cid in subs[wallet]:
+                        subs[wallet].remove(cid)
                         if not subs[wallet]:
                             del subs[wallet]
-                        save_json(SUBSCRIPTIONS_FILE, subs)
+                        save_subscriptions(subs)
                         send_message(chat_id, f"✅ Plus suivi :\n<code>{wallet}</code>")
                     else:
                         send_message(chat_id, "❌ Pas suivi.")
@@ -439,7 +467,7 @@ def bot():
 # === MAIN ===
 if __name__ == "__main__":
     print("Bot SOLANA ACHAT/VENTE + MOT DE PASSE démarré...")
-    # Lancer le tracker en thread daemon
+    # start tracker in background
     threading.Thread(target=tracker, daemon=True).start()
-    # Lancer la boucle bot (bloquante)
+    # start bot in main thread (blocking)
     bot()
