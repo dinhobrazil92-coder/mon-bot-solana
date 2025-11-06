@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram - Tracker Solana (ACHAT/VENTE)
-Prêt pour Render Web Service avec mini serveur intégré.
+Bot Telegram + Tracker Solana via HELIUS RPC
+Prêt pour Render + Disque persistant
 """
 import os
 import time
@@ -14,215 +14,121 @@ from datetime import datetime
 from flask import Flask
 
 # === CONFIG ===
-RPC_URL = os.getenv("RPC_URL", "").strip()
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "c888ba69-de31-43b7-b6c6-f6f841351f56").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY").strip()
 PASSWORD = os.getenv("PASSWORD", "Business2026$").strip()
 PORT = int(os.getenv("PORT", 10000))
 
-# === FICHIERS LOCAUX (persistants sur Render si disque monté) ===
-WALLETS_FILE = "data/wallets.txt"
-SEEN_FILE = "data/seen.txt"
-SUBSCRIPTIONS_FILE = "data/subscriptions.json"
-UPDATE_ID_FILE = "data/update_id.txt"
-AUTHORIZED_FILE = "data/authorized.json"
-TEMPLATES_FILE = "data/templates.json"
+# === FICHIERS (disque persistant) ===
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# Créer le dossier data si inexistant
-os.makedirs("data", exist_ok=True)
+WALLETS_FILE = f"{DATA_DIR}/wallets.txt"
+SEEN_FILE = f"{DATA_DIR}/seen.txt"
+SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
+UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
+AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
 
-# === UTILITAIRES FICHIER / JSON ===
-def load_json(file):
-    try:
-        with open(file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+# === HELIUS RPC URL ===
+HELIUS_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
-def save_json(file, data):
-    with open(file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+# === UTILITAIRES ===
+def load_json(file): return json.load(open(file, "r", encoding="utf-8")) if os.path.exists(file) else {}
+def save_json(file, data): json.dump(data, open(file, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+def load_list(file): return [l.strip() for l in open(file, "r", encoding="utf-8").readlines() if l.strip()] if os.path.exists(file) else []
+def save_list(file, data): open(file, "w", encoding="utf-8").write("\n".join(data) + "\n")
+def load_set(file): return set(load_list(file))
+def save_set(file, data): save_list(file, list(data))
+def load_update_id(): return int(open(UPDATE_ID_FILE).read().strip()) if os.path.exists(UPDATE_ID_FILE) else 0
+def save_update_id(uid): open(UPDATE_ID_FILE, "w").write(str(uid))
 
-def load_list(file):
-    try:
-        with open(file, "r", encoding="utf-8") as f:
-            return [line.strip() for line in f if line.strip()]
-    except Exception:
-        return []
-
-def save_list(file, data):
-    with open(file, "w", encoding="utf-8") as f:
-        for item in data:
-            f.write(str(item) + "\n")
-
-def load_set(file):
-    try:
-        with open(file, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    except Exception:
-        return set()
-
-def save_set(file, data):
-    with open(file, "w", encoding="utf-8") as f:
-        for item in data:
-            f.write(str(item) + "\n")
-
-def load_update_id():
-    try:
-        with open(UPDATE_ID_FILE, "r", encoding="utf-8") as f:
-            return int(f.read().strip())
-    except Exception:
-        return 0
-
-def save_update_id(uid):
-    with open(UPDATE_ID_FILE, "w", encoding="utf-8") as f:
-        f.write(str(uid))
-
-# === AUTHORIZATION ===
-def load_authorized():
-    return load_json(AUTHORIZED_FILE)
-
-def save_authorized(data):
-    save_json(AUTHORIZED_FILE, data)
-
-def is_authorized(chat_id):
-    return str(chat_id) in load_authorized()
-
+# === AUTH ===
+def is_authorized(chat_id): return str(chat_id) in load_json(AUTHORIZED_FILE)
 def authorize_user(chat_id):
-    data = load_authorized()
+    data = load_json(AUTHORIZED_FILE)
     data[str(chat_id)] = True
-    save_authorized(data)
+    save_json(AUTHORIZED_FILE, data)
 
 # === TEMPLATES ===
 def default_templates():
     return {
-        "access_granted": "✅ <b>Accès autorisé !</b>\n\nTu peux maintenant utiliser le bot.\n\nCommandes :\n/add WALLET → suivre\n/list → voir les wallets\n/my → mes abonnements\n/remove WALLET → arrêter",
-        "access_denied": "⛔ Mot de passe incorrect.",
-        "must_login": "🔒 Tu dois te connecter :\n<code>/login {password}</code>",
         "tx_detected": "🚨 <b>{action} DÉTECTÉ !</b>\n\n"
-                               "🔗 <a href=\"{link}\">Voir transaction</a>\n"
-                               "👤 Wallet: <code>{wallet}</code>\n"
-                               "🪙 Token (mint): <code>{mint}</code>\n"
-                               "💸 Montant: <code>{amount}</code>\n"
-                               "🕒 Heure: <code>{time}</code>\n",
-        "already_followed": "ℹ️ Déjà suivi.",
-        "now_following": "✅ Tu suis :\n<code>{wallet}</code>",
-        "wallet_invalid": "⚠️ Wallet invalide.",
-        "no_wallets": "📭 Aucun wallet.",
-        "my_subs_none": "📭 Aucun abonnement."
+                       "🔗 <a href=\"{link}\">Voir sur Solscan</a>\n"
+                       "👤 Wallet: <code>{wallet}</code>\n"
+                       "🪙 Token: <code>{mint}</code>\n"
+                       "💸 Montant: <code>{amount}</code>\n"
+                       "🕒 Heure: <code>{time}</code>",
+        "access_granted": "✅ Accès autorisé !\nUtilise /add <wallet>",
+        "must_login": "🔒 /login {password}",
+        "now_following": "✅ Suivi : <code>{wallet}</code>",
+        "wallet_invalid": "⚠️ Wallet invalide (min 32 caractères).",
+        "no_wallets": "Aucun wallet suivi."
     }
+def load_templates(): return load_json("templates.json") or default_templates()
 
-def load_templates():
+# === TELEGRAM ===
+def send_message(chat_id, text):
+    if not BOT_TOKEN: return
     try:
-        with open(TEMPLATES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default_templates()
-
-def format_html_safe(s):
-    return html.escape(str(s))
-
-# === TELEGRAM SEND ===
-def send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True):
-    if not BOT_TOKEN:
-        print("[send_message] BOT_TOKEN non défini.")
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        resp = requests.post(
-            url,
-            data={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": disable_web_page_preview
-            },
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=10
         )
-        if resp.status_code != 200:
-            print(f"[send_message] Erreur {resp.status_code}: {resp.text}")
-    except Exception as e:
-        print(f"[send_message error] {e}")
+    except: pass
 
-# === SOLANA RPC HELPERS ===
-def rpc_post(payload):
-    if not RPC_URL:
-        print("[rpc_post] RPC_URL non défini.")
-        return None
+# === HELIUS RPC (corrigé) ===
+def rpc_post(method, params=[]):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
-        r = requests.post(RPC_URL, json=payload, timeout=15)
+        r = requests.post(HELIUS_URL, json=payload, timeout=15)
         r.raise_for_status()
-        return r.json()
+        return r.json().get("result")
     except Exception as e:
-        print(f"[rpc_post error] {e}")
+        print(f"[RPC ERROR] {method}: {e}")
         return None
 
-def get_signatures(wallet, limit=5):
-    payload = {
-        "jsonrpc": "2.0", "id": 1,
-        "method": "getSignaturesForAddress",
-        "params": [wallet, {"limit": limit}]
-    }
-    res = rpc_post(payload)
-    return res.get("result", []) if res else []
+def get_signatures(wallet, limit=10):
+    return rpc_post("getSignaturesForAddress", [wallet, {"limit": limit}]) or []
 
 def get_transaction(sig):
-    payload = {
-        "jsonrpc": "2.0", "id": 1,
-        "method": "getTransaction",
-        "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
-    }
-    res = rpc_post(payload)
-    return res.get("result") if res else None
+    return rpc_post("getTransaction", [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
 
-# === DETECTION ACHAT / VENTE ===
-TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+# === DÉTECTION TRANSFERT TOKEN ===
+TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
-def extract_transfer_info(parsed):
-    if not parsed:
-        return None
-    ptype = parsed.get("type")
-    info = parsed.get("info", {})
-    if ptype in ("transfer", "transferChecked"):
+def find_token_transfer(tx, wallet):
+    if not tx: return None
+    instructions = tx.get("transaction", {}).get("message", {}).get("instructions", [])
+    meta = tx.get("meta", {}) or {}
+    all_instr = instructions[:]
+    for inner in meta.get("innerInstructions", []):
+        all_instr.extend(inner.get("instructions", []))
+
+    for i in all_instr:
+        if i.get("programId") != TOKEN_PROGRAM: continue
+        p = i.get("parsed", {}) or {}
+        info = p.get("info", {})
+        if p.get("type") not in ("transfer", "transferChecked"): continue
+
         source = info.get("source")
         dest = info.get("destination")
         mint = info.get("mint") or info.get("mintAccount")
-        if "tokenAmount" in info and isinstance(info["tokenAmount"], dict):
+        amount = info.get("amount")
+        if "tokenAmount" in info:
             ta = info["tokenAmount"]
             amount = ta.get("amount")
             decimals = ta.get("decimals")
-            if amount and decimals is not None:
-                return source, dest, mint, {"amount": amount, "decimals": decimals}
-        else:
-            amount = info.get("amount") or info.get("lamports")
-            return source, dest, mint, amount
-    return None
 
-def find_token_transfer(tx, wallet, direction="in"):
-    if not tx:
-        return None
-    instructions = tx.get("transaction", {}).get("message", {}).get("instructions", [])
-    meta = tx.get("meta", {}) or {}
-    all_instructions = instructions[:]
-    for inner in meta.get("innerInstructions", []) or []:
-        all_instructions.extend(inner.get("instructions", []))
-    for instr in all_instructions:
-        program_id = instr.get("programId")
-        if program_id != TOKEN_PROGRAM_ID:
-            continue
-        parsed = instr.get("parsed") or {}
-        extracted = extract_transfer_info(parsed)
-        if not extracted:
-            continue
-        source, dest, mint, amount = extracted
-        if direction == "in" and dest == wallet:
-            return {"mint": mint or "UNKNOWN", "amount": amount, "type": "ACHAT"}
-        elif direction == "out" and source == wallet:
-            return {"mint": mint or "UNKNOWN", "amount": amount, "type": "VENTE"}
+        if dest == wallet:
+            return {"type": "ACHAT", "mint": mint or "?", "amount": amount, "decimals": decimals}
+        if source == wallet:
+            return {"type": "VENTE", "mint": mint or "?", "amount": amount, "decimals": decimals}
     return None
 
 # === TRACKER ===
 def tracker():
-    print("[tracker] Démarrage du tracker Solana...")
+    print("Tracker démarré (Helius)")
     seen = load_set(SEEN_FILE)
     while True:
         try:
@@ -232,160 +138,119 @@ def tracker():
                 continue
 
             for wallet in wallets:
-                sigs = get_signatures(wallet, limit=5)
+                sigs = get_signatures(wallet, limit=10)
                 for s in sigs:
-                    sig = s.get("signature")
-                    if not sig or sig in seen:
-                        continue
-                    tx = get_transaction(sig)
-                    buy = find_token_transfer(tx, wallet, "in")
-                    sell = find_token_transfer(tx, wallet, "out")
-                    if buy or sell:
-                        action_info = buy or sell
-                        action = action_info["type"]
-                        mint = action_info["mint"]
-                        amount_raw = action_info["amount"]
-                        try:
-                            if isinstance(amount_raw, dict):
-                                amt = int(amount_raw["amount"])
-                                dec = int(amount_raw["decimals"])
-                                amount_display = f"{amt / (10 ** dec):,.8f}".rstrip("0").rstrip(".")
-                            else:
-                                amount_display = f"{int(amount_raw) / 1_000_000_000:,.2f}"
-                        except:
-                            amount_display = str(amount_raw)
+                    sig = s["signature"]
+                    if sig in seen: continue
 
-                        link = f"https://solscan.io/tx/{sig}"
-                        templates = load_templates()
-                        template = templates.get("tx_detected", default_templates()["tx_detected"])
-                        message = template.format(
-                            action=format_html_safe(action),
-                            link=format_html_safe(link),
-                            wallet=format_html_safe(wallet),
-                            mint=format_html_safe(mint),
-                            amount=format_html_safe(amount_display),
-                            time=format_html_safe(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
+                    tx = get_transaction(sig)
+                    transfer = find_token_transfer(tx, wallet)
+                    if transfer:
+                        amount = transfer["amount"]
+                        try:
+                            if transfer.get("decimals") is not None:
+                                amount = f"{int(amount) / (10 ** int(transfer['decimals'])):,.8f}".rstrip("0").rstrip(".")
+                            else:
+                                amount = f"{int(amount) / 1_000_000_000:,.2f}"
+                        except: amount = str(amount)
+
+                        msg = default_templates()["tx_detected"].format(
+                            action=transfer["type"],
+                            link=f"https://solscan.io/tx/{sig}",
+                            wallet=wallet[:8] + "..." + wallet[-6:],
+                            mint=transfer["mint"][:8] + "..." + transfer["mint"][-6:],
+                            amount=amount,
+                            time=datetime.utcnow().strftime("%H:%M:%S")
                         )
                         subs = load_json(SUBSCRIPTIONS_FILE)
-                        subscribers = subs.get(wallet, [])
-                        for chat_id in subscribers:
+                        for chat_id in subs.get(wallet, []):
                             if is_authorized(chat_id):
-                                send_message(chat_id, message)
+                                send_message(chat_id, msg)
+
                     seen.add(sig)
                     save_set(SEEN_FILE, seen)
-            time.sleep(20)
+            time.sleep(15)
         except Exception as e:
-            print(f"[tracker] Erreur: {e}")
+            print(f"[Tracker error] {e}")
             time.sleep(10)
 
 # === BOT TELEGRAM ===
 def bot():
-    print("[bot] Démarrage du bot Telegram (polling)...")
+    print("Bot Telegram démarré")
     offset = load_update_id()
     while True:
         try:
-            resp = requests.get(
+            updates = requests.get(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-                params={"offset": offset, "timeout": 30},
-                timeout=40
-            ).json()
-            updates = resp.get("result", [])
-            for update in updates:
-                offset = update["update_id"] + 1
+                params={"offset": offset, "timeout": 30}, timeout=40
+            ).json().get("result", [])
+
+            for u in updates:
+                offset = u["update_id"] + 1
                 save_update_id(offset)
-                msg = update.get("message") or {}
+                msg = u.get("message") or {}
                 chat_id = msg.get("chat", {}).get("id")
                 text = (msg.get("text") or "").strip()
-                if not chat_id or not text or not text.startswith("/"):
+                if not text.startswith("/"): continue
+
+                cmd, *args = text.split()
+                args = " ".join(args)
+                cmd = cmd.lower()
+
+                if cmd == "/login" and args == PASSWORD:
+                    authorize_user(chat_id)
+                    send_message(chat_id, default_templates()["access_granted"])
                     continue
-
-                cmd_parts = text.split(maxsplit=1)
-                cmd = cmd_parts[0].lower()
-                args = cmd_parts[1] if len(cmd_parts) > 1 else ""
-
-                templates = load_templates()
-
-                # /login
-                if cmd == "/login":
-                    if args == PASSWORD:
-                        authorize_user(chat_id)
-                        send_message(chat_id, templates.get("access_granted", "Accès autorisé."))
-                    else:
-                        send_message(chat_id, templates.get("access_denied", "Accès refusé."))
-                    continue
-
                 if not is_authorized(chat_id):
-                    send_message(chat_id, templates.get("must_login", "Connecte-toi d'abord.").format(password=PASSWORD))
+                    send_message(chat_id, default_templates()["must_login"].format(password=PASSWORD))
                     continue
 
                 subs = load_json(SUBSCRIPTIONS_FILE)
-
-                if cmd == "/start":
-                    send_message(chat_id, templates.get("access_granted", "Bienvenue !"))
-                elif cmd == "/add" and args:
-                    wallet = args.strip()
-                    if len(wallet) < 32:
-                        send_message(chat_id, templates.get("wallet_invalid", "Wallet invalide."))
+                if cmd == "/add" and args:
+                    w = args.strip()
+                    if len(w) < 32:
+                        send_message(chat_id, default_templates()["wallet_invalid"])
                         continue
                     current = load_list(WALLETS_FILE)
-                    if wallet not in current:
-                        current.append(wallet)
+                    if w not in current:
+                        current.append(w)
                         save_list(WALLETS_FILE, current)
-                    if wallet not in subs:
-                        subs[wallet] = []
-                    if chat_id not in subs[wallet]:
-                        subs[wallet].append(chat_id)
+                    if w not in subs:
+                        subs[w] = []
+                    if chat_id not in subs[w]:
+                        subs[w].append(chat_id)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(chat_id, templates.get("now_following", "Suivi activé.").format(wallet=wallet))
-                    else:
-                        send_message(chat_id, templates.get("already_followed", "Déjà suivi."))
-                elif cmd == "/list":
-                    wallets = load_list(WALLETS_FILE)
-                    if wallets:
-                        txt = "<b>Wallets suivis :</b>\n\n"
-                        for w in wallets:
-                            count = len([u for u in subs.get(w, []) if is_authorized(u)])
-                            txt += f"• <code>{w}</code> ({count} abonnés)\n"
-                        send_message(chat_id, txt)
-                    else:
-                        send_message(chat_id, templates.get("no_wallets", "Aucun wallet."))
+                        send_message(chat_id, default_templates()["now_following"].format(wallet=w))
                 elif cmd == "/my":
-                    my = [w for w, users in subs.items() if chat_id in users]
-                    if my:
-                        txt = "<b>Tes abonnements :</b>\n\n" + "\n".join(f"• <code>{w}</code>" for w in my)
-                        send_message(chat_id, txt)
-                    else:
-                        send_message(chat_id, templates.get("my_subs_none", "Aucun abonnement."))
-                elif cmd == "/remove" and args:
-                    wallet = args.strip()
-                    if wallet in subs and chat_id in subs[wallet]:
-                        subs[wallet].remove(chat_id)
-                        if not subs[wallet]:
-                            del subs[wallet]
-                        save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(chat_id, f"✅ Plus suivi :\n<code>{wallet}</code>")
-                    else:
-                        send_message(chat_id, "❌ Pas suivi.")
-                else:
-                    send_message(chat_id, "Commande inconnue.")
+                    my = [w for w, u in subs.items() if chat_id in u]
+                    send_message(chat_id, "\n".join([f"• <code>{w}</code>" for w in my]) or "Aucun")
         except Exception as e:
-            print(f"[bot] Exception: {e}")
+            print(f"[Bot error] {e}")
             time.sleep(5)
 
-# === FLASK SERVER (pour Render) ===
+# === FLASK ===
 app = Flask(__name__)
+@app.route("/"); return "Bot actif"
+@app.route("/health"); return "OK", 200
 
-@app.route("/")
-def index():
-    return "🚀 Bot Solana Tracker en marche !<br>Tracker + Bot Telegram actifs."
-
-@app.route("/health")
-def health():
-    return "OK", 200
-
-# === DEMARRAGE ===
+# === MAIN ===
 if __name__ == "__main__":
-    print("Démarrage du Bot Solana + Telegram sur Render...")
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
-    app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+    app.run(host="0.0.0.0", port=PORT)
+
+render.yaml
+yamlservices:
+  - type: web
+    name: solana-bot
+    env: python
+    buildCommand: pip install requests flask
+    startCommand: python bot.py
+    envVars:
+      HELIUS_API_KEY: "c888ba69-de31-43b7-b6c6-f6f841351f56"
+      BOT_TOKEN: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+      PASSWORD: "Business2026$"
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
