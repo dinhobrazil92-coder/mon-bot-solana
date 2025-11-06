@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: solana-bot
+    name: solana-tracker-bot
     env: python
     buildCommand: pip install requests flask
     startCommand: python tracker_bot.py
