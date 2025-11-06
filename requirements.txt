@@ -1,2 +1,1 @@
 requests
-Ajout requirements.txt
