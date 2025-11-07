@@ -23,8 +23,7 @@ UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
 
 # === FICHIERS ===
 def load_json(path):
-    if not os.path.exists(path):
-        return {}
+    if not os.path.exists(path): return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -39,8 +38,7 @@ def save_json(path, data):
         pass
 
 def load_list(path):
-    if not os.path.exists(path):
-        return []
+    if not os.path.exists(path): return []
     try:
         with open(path, "r", encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip()]
@@ -54,21 +52,15 @@ def save_list(path, data):
     except:
         pass
 
-def load_set(path):
-    return set(load_list(path))
-
-def save_set(path, data):
-    save_list(path, list(data))
-
+def load_set(path): return set(load_list(path))
+def save_set(path, data): save_list(path, list(data))
 def load_update_id():
-    if not os.path.exists(UPDATE_ID_FILE):
-        return 0
+    if not os.path.exists(UPDATE_ID_FILE): return 0
     try:
         with open(UPDATE_ID_FILE, "r") as f:
             return int(f.read().strip())
     except:
         return 0
-
 def save_update_id(uid):
     try:
         with open(UPDATE_ID_FILE, "w") as f:
@@ -94,10 +86,7 @@ def send(cid, text):
             data={"chat_id": cid, "text": text, "parse_mode": "HTML"},
             timeout=10
         )
-        if r.status_code == 200:
-            print(f"[OK] Envoyé à {cid}")
-        else:
-            print(f"[ERR] TG {r.status_code}")
+        print(f"[OK] Envoyé à {cid}" if r.status_code == 200 else f"[ERR] TG {r.status_code}")
     except Exception as e:
         print(f"[ERR] TG: {e}")
 
@@ -107,56 +96,41 @@ def test_force():
 
 # === RPC SOLANA ===
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
-
-def rpc(method, params=None):
-    if params is None:
-        params = []
+def rpc(m, p=None):
     try:
-        r = requests.post(
-            SOLANA_RPC,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            timeout=15
-        )
+        r = requests.post(SOLANA_RPC, json={"jsonrpc": "2.0", "id": 1, "method": m, "params": p or []}, timeout=15)
         r.raise_for_status()
         return r.json().get("result")
     except:
         return None
 
-def get_signatures(w, limit=10):
-    return rpc("getSignaturesForAddress", [w, {"limit": limit}]) or []
-
-def get_transaction(sig):
-    return rpc("getTransaction", [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
+def get_signatures(w, l=10): return rpc("getSignaturesForAddress", [w, {"limit": l}]) or []
+def get_transaction(s): return rpc("getTransaction", [s, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
 
 # === DÉTECTION ===
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 MINT_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 
-def detect_creation(tx, wallet):
-    if not tx:
-        return None
+def detect_creation(tx, w):
+    if not tx: return None
     for i in tx.get("transaction", {}).get("message", {}).get("instructions", []):
         if i.get("programId") == MINT_PROGRAM and i.get("parsed", {}).get("type") == "initializeMint":
             info = i.get("parsed", {}).get("info", {})
-            if info.get("mintAuthority") == wallet:
+            if info.get("mintAuthority") == w:
                 return info.get("mint")
     return None
 
-def detect_transfer(tx, wallet):
-    if not tx:
-        return None
+def detect_transfer(tx, w):
+    if not tx: return None
     all_i = tx.get("transaction", {}).get("message", {}).get("instructions", [])[:]
     for inner in tx.get("meta", {}).get("innerInstructions", []):
         all_i.extend(inner.get("instructions", []))
     for i in all_i:
         if i.get("programId") == TOKEN_PROGRAM and i.get("parsed", {}).get("type") in ("transfer", "transferChecked"):
             info = i.get("parsed", {}).get("info", {})
-            src = info.get("source")
-            dst = info.get("destination")
-            if dst == wallet:
-                return "ACHAT", info.get("mint") or "?", info.get("amount"), info.get("tokenAmount", {}).get("decimals")
-            if src == wallet:
-                return "VENTE", info.get("mint") or "?", info.get("amount"), info.get("tokenAmount", {}).get("decimals")
+            src, dst = info.get("source"), info.get("destination")
+            if dst == w: return "ACHAT", info.get("mint") or "?", info.get("amount"), info.get("tokenAmount", {}).get("decimals")
+            if src == w: return "VENTE", info.get("mint") or "?", info.get("amount"), info.get("tokenAmount", {}).get("decimals")
     return None
 
 # === TRACKER ===
@@ -168,11 +142,9 @@ def tracker():
             for w in load_list(WALLETS_FILE):
                 for s in get_signatures(w, 10):
                     sig = s.get("signature")
-                    if not sig or sig in seen:
-                        continue
+                    if not sig or sig in seen: continue
                     tx = get_transaction(sig)
-                    if not tx:
-                        continue
+                    if not tx: continue
 
                     if mint := detect_creation(tx, w):
                         send(MY_CHAT_ID, f"NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>")
@@ -205,8 +177,7 @@ def bot():
                 m = u.get("message") or {}
                 cid = m.get("chat", {}).get("id")
                 txt = (m.get("text") or "").strip()
-                if not txt.startswith("/"):
-                    continue
+                if not txt.startswith("/"): continue
                 cmd = txt.split()[0].lower()
                 args = " ".join(txt.split()[1:])
 
