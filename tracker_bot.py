@@ -11,12 +11,13 @@ import json
 import time
 import threading
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
 # === CONFIG ===
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
+DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # chat global pour notifications
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -61,10 +62,18 @@ def send_message(chat_id, text):
         print(f"[TG] Exception: {e}")
 
 def broadcast_to_all(text):
-    """Envoie un message à tous les utilisateurs autorisés."""
     users = load_json(AUTHORIZED_FILE)
     for cid in users:
         send_message(cid, text)
+    if DEFAULT_CHAT_ID:
+        send_message(DEFAULT_CHAT_ID, text)
+
+def send_telegram_notification(data):
+    """Envoi simplifié pour notifications Helius brutes."""
+    message = f"🔔 Nouvelle transaction détectée : {data.get('type', 'Inconnue')}"
+    if DEFAULT_CHAT_ID:
+        send_message(DEFAULT_CHAT_ID, message)
+    broadcast_to_all(message)
 
 # === AUTH ===
 def is_authorized(chat_id):
@@ -97,6 +106,7 @@ def helius_webhook():
     subs = load_json(SUBSCRIPTIONS_FILE)
     print(f"[Helius] Événement reçu: {json.dumps(data, indent=2)}")
 
+    # Notifications personnalisées
     for event in data.get("events", []):
         try:
             wallet = event.get("account", "inconnu")
@@ -118,13 +128,13 @@ def helius_webhook():
                 if is_authorized(cid):
                     send_message(cid, message)
 
-            # Option : envoyer à tous les utilisateurs autorisés
-            # broadcast_to_all(message)
+            # Envoi à un chat global si défini
+            send_telegram_notification(event)
 
         except Exception as e:
             print(f"[Helius webhook] Erreur: {e}")
 
-    return "OK", 200
+    return jsonify({"status": "ok"}), 200
 
 # === BOT TELEGRAM ===
 def bot():
