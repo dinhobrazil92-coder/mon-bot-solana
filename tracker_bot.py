@@ -4,6 +4,7 @@
 Bot Telegram Tracker Solana avec Webhook Helius
 - Notifications instantanées : achat, vente, création de token (SOL, SPL, NFT)
 - Compatible Render
+- Supporte payload Helius dict ou liste
 """
 
 import os
@@ -62,7 +63,6 @@ def send_message(chat_id, text):
         print(f"[TG] Exception: {e}")
 
 def broadcast_to_all(text):
-    """Envoie un message à tous les utilisateurs autorisés."""
     users = load_json(AUTHORIZED_FILE)
     for cid in users:
         send_message(cid, text)
@@ -100,51 +100,53 @@ def health():
 # === WEBHOOK HELIUS ===
 @app.route("/helius", methods=["POST"])
 def helius_webhook():
-    """Réception d'événements Helius"""
-    data = request.get_json()
-    if not data:
+    payload = request.get_json()
+    if not payload:
         return "No data", 400
 
     subs = load_json(SUBSCRIPTIONS_FILE)
-    print(f"[Helius] Payload reçu: {json.dumps(data, indent=2)}")
+    print(f"[Helius] Payload reçu: {json.dumps(payload, indent=2)}")
 
-    # Récupère tous les types d'événements possibles
-    events = data.get("events") or data.get("tokenTransfers") or data.get("nftTransfers") or []
+    # Support liste ou dict
+    if isinstance(payload, list):
+        events = payload
+    elif isinstance(payload, dict):
+        events = payload.get("events") or payload.get("tokenTransfers") or payload.get("nftTransfers") or []
+    else:
+        events = []
 
     for event in events:
         try:
-            # Détecte wallet principal
             wallet = event.get("account") or event.get("fromUserAccount") or event.get("source") or "inconnu"
-            
-            # Transaction / signature
             tx_hash = event.get("signature") or event.get("txHash") or event.get("transactionHash") or "inconnu"
-            
-            # Montant
-            amount = event.get("amount") or event.get("lamports") or event.get("tokenAmount") or "?"
-            
-            # Token / NFT
+
+            # Montant en SOL si lamports, sinon tokenAmount
+            if "lamports" in event:
+                amount = round(event.get("lamports", 0)/1e9, 9)
+                amount_str = f"{amount} SOL"
+            else:
+                amount_str = str(event.get("amount") or event.get("tokenAmount") or "?")
+
             mint = event.get("mint") or event.get("tokenAddress") or "?"
 
-            # Type d'action
             action_type = event.get("type") or "Transaction"
             if event.get("tokenStandard"):
                 action_type += f" ({event.get('tokenStandard')})"
 
-            # Message formaté
             message = (
                 f"💰 <b>{action_type}</b>\n\n"
                 f"👛 Wallet: <code>{wallet}</code>\n"
                 f"🪙 Token: <code>{mint}</code>\n"
-                f"💵 Montant: <code>{amount}</code>\n"
+                f"💵 Montant: <code>{amount_str}</code>\n"
                 f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir la transaction</a>"
             )
 
-            # Envoi aux abonnés du wallet
+            # Envoi aux abonnés
             for cid in subs.get(wallet, []):
                 if is_authorized(cid):
                     send_message(cid, message)
 
-            # Envoi à chat global
+            # Notification globale
             send_telegram_notification(event)
 
         except Exception as e:
@@ -232,6 +234,8 @@ if __name__ == "__main__":
     print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
+
 
 
 
