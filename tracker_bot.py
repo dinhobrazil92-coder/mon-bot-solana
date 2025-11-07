@@ -17,7 +17,7 @@ from flask import Flask, request, jsonify
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
-DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # chat global pour notifications
+DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # Chat global pour notifications
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -62,17 +62,17 @@ def send_message(chat_id, text):
         print(f"[TG] Exception: {e}")
 
 def broadcast_to_all(text):
+    """Envoie un message à tous les utilisateurs autorisés."""
     users = load_json(AUTHORIZED_FILE)
     for cid in users:
         send_message(cid, text)
     if DEFAULT_CHAT_ID:
         send_message(DEFAULT_CHAT_ID, text)
 
-def send_telegram_notification(data):
+def send_telegram_notification(event):
     """Envoi simplifié pour notifications Helius brutes."""
-    message = f"🔔 Nouvelle transaction détectée : {data.get('type', 'Inconnue')}"
-    if DEFAULT_CHAT_ID:
-        send_message(DEFAULT_CHAT_ID, message)
+    msg_type = event.get("type") or "Transaction"
+    message = f"🔔 Nouvelle transaction détectée : {msg_type}"
     broadcast_to_all(message)
 
 # === AUTH ===
@@ -98,22 +98,24 @@ def health():
 # === WEBHOOK HELIUS ===
 @app.route("/helius", methods=["POST"])
 def helius_webhook():
-    """Réception d'événements de Helius"""
+    """Réception d'événements Helius"""
     data = request.get_json()
     if not data:
         return "No data", 400
 
     subs = load_json(SUBSCRIPTIONS_FILE)
-    print(f"[Helius] Événement reçu: {json.dumps(data, indent=2)}")
+    print(f"[Helius] Payload reçu: {json.dumps(data, indent=2)}")
 
-    # Notifications personnalisées
-    for event in data.get("events", []):
+    # Récupère tous les types d'événements possibles
+    events = data.get("events") or data.get("tokenTransfers") or data.get("nftTransfers") or []
+
+    for event in events:
         try:
-            wallet = event.get("account", "inconnu")
-            tx_hash = event.get("signature", "inconnu")
-            amount = event.get("amount", "?")
-            mint = event.get("mint", "?")
-            action_type = event.get("type", "Transaction")
+            wallet = event.get("account") or event.get("source") or "inconnu"
+            tx_hash = event.get("signature") or event.get("txHash") or "inconnu"
+            amount = event.get("amount") or event.get("lamports") or "?"
+            mint = event.get("mint") or event.get("tokenAddress") or "?"
+            action_type = event.get("type") or "Transaction"
 
             message = (
                 f"💰 <b>{action_type}</b>\n\n"
@@ -123,12 +125,12 @@ def helius_webhook():
                 f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir la transaction</a>"
             )
 
-            # Tous les abonnés du wallet reçoivent la notif
+            # Envoi aux abonnés du wallet
             for cid in subs.get(wallet, []):
                 if is_authorized(cid):
                     send_message(cid, message)
 
-            # Envoi à un chat global si défini
+            # Envoi à chat global
             send_telegram_notification(event)
 
         except Exception as e:
@@ -216,3 +218,4 @@ if __name__ == "__main__":
     print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
