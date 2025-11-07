@@ -2,11 +2,15 @@ services:
   - type: web
     name: solana-tracker
     env: python
+    region: oregon
+    plan: free
     buildCommand: pip install requests flask
     startCommand: python tracker_bot.py
     envVars:
-      BOT_TOKEN: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
-      PORT: "10000"
+      BOT_TOKEN:
+        value: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+      PORT:
+        value: "10000"
     disk:
       name: data
       mountPath: /app/data
