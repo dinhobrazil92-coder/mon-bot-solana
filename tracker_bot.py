@@ -15,7 +15,7 @@ import requests
 from flask import Flask, request, jsonify
 
 # === CONFIG ===
-BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
 DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # Chat global pour toutes les notifications
@@ -236,6 +236,7 @@ if __name__ == "__main__":
     print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
 
 
 
