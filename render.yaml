@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: solana-bot
+    name: solana-tracker
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python tracker_bot.py
     envVars:
       BOT_TOKEN:
-        value: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+        value: "8104197353:AAEkh1gVe8eH9z48owFUc1KUENLVl7NG60k"
       PORT:
         value: "10000"
     disk:
