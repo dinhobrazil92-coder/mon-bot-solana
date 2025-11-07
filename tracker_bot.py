@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Bot Telegram Tracker Solana avec Webhook Helius
-- Notifications instantanées : achat, vente, création de token
+- Notifications instantanées : achat, vente, création de token (SOL, SPL, NFT)
 - Compatible Render
 """
 
@@ -70,8 +70,10 @@ def broadcast_to_all(text):
         send_message(DEFAULT_CHAT_ID, text)
 
 def send_telegram_notification(event):
-    """Envoi simplifié pour notifications Helius brutes."""
+    """Notification simplifiée pour chat global."""
     msg_type = event.get("type") or "Transaction"
+    if event.get("tokenStandard"):
+        msg_type += f" ({event.get('tokenStandard')})"
     message = f"🔔 Nouvelle transaction détectée : {msg_type}"
     broadcast_to_all(message)
 
@@ -111,12 +113,24 @@ def helius_webhook():
 
     for event in events:
         try:
-            wallet = event.get("account") or event.get("source") or "inconnu"
-            tx_hash = event.get("signature") or event.get("txHash") or "inconnu"
-            amount = event.get("amount") or event.get("lamports") or "?"
+            # Détecte wallet principal
+            wallet = event.get("account") or event.get("fromUserAccount") or event.get("source") or "inconnu"
+            
+            # Transaction / signature
+            tx_hash = event.get("signature") or event.get("txHash") or event.get("transactionHash") or "inconnu"
+            
+            # Montant
+            amount = event.get("amount") or event.get("lamports") or event.get("tokenAmount") or "?"
+            
+            # Token / NFT
             mint = event.get("mint") or event.get("tokenAddress") or "?"
-            action_type = event.get("type") or "Transaction"
 
+            # Type d'action
+            action_type = event.get("type") or "Transaction"
+            if event.get("tokenStandard"):
+                action_type += f" ({event.get('tokenStandard')})"
+
+            # Message formaté
             message = (
                 f"💰 <b>{action_type}</b>\n\n"
                 f"👛 Wallet: <code>{wallet}</code>\n"
@@ -218,4 +232,6 @@ if __name__ == "__main__":
     print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
+
 
