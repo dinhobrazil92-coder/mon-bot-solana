@@ -12,9 +12,6 @@ PORT = int(os.getenv("PORT", 10000))
 MY_CHAT_ID = "8228401361"
 SECRET_PASSWORD = "Business2026$"
 
-print("BOT_TOKEN:", BOT_TOKEN[:15] + "...")
-print("MY_CHAT_ID:", MY_CHAT_ID)
-
 # DATA
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -92,7 +89,7 @@ def send(cid, text):
 
 def test_force():
     time.sleep(5)
-    send(MY_CHAT_ID, "<b>BOT VIVANT !</b>\n\nTest force OK.\nEnvoie /add &lt;wallet&gt;")
+    send(MY_CHAT_ID, "<b>BOT VIVANT !</b>\n\nTest force OK.\nEnvoie /add <wallet>")
 
 # RPC SOLANA
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
@@ -158,19 +155,23 @@ def tracker():
                     tx = get_transaction(sig)
                     if not tx: continue
 
-                    # Création
-                    if mint := detect_creation(tx, w):
-                        send(MY_CHAT_ID, f"NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>")
+                    # Création → SANS :=
+                    mint = detect_creation(tx, w)
+                    if mint:
+                        send(MY_CHAT_ID, "NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>")
 
-                    # Transfert
+                    # Transfert → SANS :=
                     result = detect_transfer(tx, w)
                     if result:
                         action, mint, amt, dec = result
                         try:
-                            amount = f"{int(amt)/(10**int(dec)):,}".rstrip("0").rstrip(".") if dec else f"{int(amt)/1_000_000_000:,}"
+                            if dec is not None:
+                                amount = str(int(amt) / (10 ** int(dec))).rstrip("0").rstrip(".")
+                            else:
+                                amount = str(int(amt) / 1000000000).rstrip("0").rstrip(".")
                         except:
                             amount = str(amt)
-                        send(MY_CHAT_ID, f"<b>{action}</b>\n<a href=\"https://solscan.io/tx/{sig}\">Voir</a>\n<code>{w[:8]}...{w[-6:]}</code>\n<code>{amount}</code>")
+                        send(MY_CHAT_ID, "<b>" + action + "</b>\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>\n<code>" + amount + "</code>")
 
                     seen.add(sig)
                     save_set(SEEN_FILE, seen)
@@ -200,7 +201,7 @@ def bot():
                     d = load_json(AUTHORIZED_FILE)
                     d[str(cid)] = True
                     save_json(AUTHORIZED_FILE, d)
-                    send(cid, "Accès autorisé !\n/add &lt;wallet&gt;")
+                    send(cid, "Accès autorisé !\n/add <wallet>")
                     continue
 
                 if not is_authorized(cid):
@@ -221,10 +222,16 @@ def bot():
                     if cid not in subs[w]:
                         subs[w].append(cid)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send(cid, f"Suivi activé : <code>{w}</code>")
+                        send(cid, "Suivi activé : <code>" + w + "</code>")
                 elif cmd == "/my":
                     mine = [w for w, users in subs.items() if cid in users]
-                    send(cid, "<b>Mes wallets :</b>\n" + "\n".join(f"• <code>{w}</code>" for w in mine) if mine else "Aucun")
+                    if mine:
+                        msg = "<b>Mes wallets :</b>\n"
+                        for wallet in mine:
+                            msg += "• <code>" + wallet + "</code>\n"
+                        send(cid, msg)
+                    else:
+                        send(cid, "Aucun")
         except Exception as e:
             print("Bot ERR:", e)
             time.sleep(5)
