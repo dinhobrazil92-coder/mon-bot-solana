@@ -7,7 +7,7 @@ services:
     plan: free
     envVars:
       - key: BOT_TOKEN
-        value: "TON_TOKEN_TELEGRAM_ICI"
+        value: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
       - key: PASSWORD
         value: "Business2026$"
       - key: PORT
