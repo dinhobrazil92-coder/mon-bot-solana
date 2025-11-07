@@ -1,116 +1,104 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Bot Telegram tracker de wallet Solana (RPC officiel)
+- Surveille les transactions récentes des wallets
+- Envoie des notifications Telegram
+- Compatible Render
+"""
+
 import os
 import time
 import requests
-from flask import Flask, jsonify
 
-# === CONFIGURATION ===
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-RPC_URL = "https://api.mainnet-beta.solana.com"
+# === CONFIG ===
+BOT_TOKEN = "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+CHAT_ID = "8228401361"  # Chat ID du groupe ou utilisateur Telegram
+PASSWORD = os.getenv("PASSWORD", "**********")  # Masqué pour sécurité
+RPC_URL = "https://api.mainnet-beta.solana.com"  # RPC public officiel
 
-# Liste des wallets à surveiller
+# Liste des wallets à suivre (tu peux en ajouter autant que tu veux)
 WATCHED_WALLETS = [
-    "YourWalletAddress1",
-    "YourWalletAddress2"
+    "H3px97q4yksPtBG95YkQfAkEbFJMiXe8xyr9r2DzxX6A",  # Wallet test actif
+    # "TA_WALLET_ICI"
 ]
 
-# Historique simple pour éviter les doublons
-last_signatures = {}
-
-app = Flask(__name__)
-
-def get_confirmed_transactions(wallet_address):
-    """Récupère les dernières transactions d'un wallet Solana via RPC officiel."""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getSignaturesForAddress",
-        "params": [wallet_address, {"limit": 5}]
-    }
-
+# === FONCTIONS UTILITAIRES ===
+def send_telegram_message(text: str):
+    """Envoie un message Telegram."""
     try:
-        response = requests.post(RPC_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        if "result" in data:
-            return data["result"]
-        return []
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
+        r = requests.post(url, data=payload)
+        if r.status_code != 200:
+            print(f"[ERREUR TELEGRAM] {r.text}")
+    except Exception as e:
+        print(f"[ERREUR TELEGRAM] {e}")
+
+
+def get_recent_transactions(wallet: str, limit=5):
+    """Récupère les transactions récentes d’un wallet via RPC."""
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [wallet, {"limit": limit}],
+        }
+        r = requests.post(RPC_URL, json=payload)
+        data = r.json()
+        return data.get("result", [])
     except Exception as e:
         print(f"[ERREUR RPC] {e}")
         return []
 
 
-def get_transaction_details(signature):
-    """Récupère les détails d'une transaction."""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getTransaction",
-        "params": [signature, {"encoding": "jsonParsed"}]
-    }
+def get_transaction_detail(signature: str):
+    """Récupère le détail complet d’une transaction."""
     try:
-        response = requests.post(RPC_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        return response.json().get("result")
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [signature, {"encoding": "jsonParsed"}],
+        }
+        r = requests.post(RPC_URL, json=payload)
+        data = r.json()
+        return data.get("result", {})
     except Exception as e:
-        print(f"[ERREUR DETAIL TX] {e}")
-        return None
+        print(f"[ERREUR TRANSACTION] {e}")
+        return {}
 
 
-def send_telegram_message(text):
-    """Envoie une notification sur Telegram."""
-    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
-        print("[ERREUR] Bot token ou chat_id manquant.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"[ERREUR TELEGRAM] {e}")
+# === LOGIQUE PRINCIPALE ===
+def main():
+    print("🚀 Bot Solana RPC en cours d’exécution...")
+    last_tx = {w: None for w in WATCHED_WALLETS}
 
-
-def analyze_and_notify(wallet):
-    """Analyse les transactions et envoie les alertes Telegram."""
-    global last_signatures
-    txs = get_confirmed_transactions(wallet)
-    if not txs:
-        return
-
-    for tx in txs:
-        sig = tx["signature"]
-        if wallet not in last_signatures:
-            last_signatures[wallet] = []
-        if sig in last_signatures[wallet]:
-            continue  # déjà traité
-
-        details = get_transaction_details(sig)
-        if not details:
-            continue
-
-        message = f"💰 Nouvelle transaction détectée pour {wallet}\nSignature: {sig}"
-        send_telegram_message(message)
-
-        last_signatures[wallet].append(sig)
-        if len(last_signatures[wallet]) > 10:
-            last_signatures[wallet].pop(0)
-
-
-@app.route("/")
-def home():
-    return jsonify({"status": "Bot Solana RPC en ligne 🚀"})
-
-
-def main_loop():
-    print("🔄 Démarrage du suivi des wallets Solana...")
     while True:
         for wallet in WATCHED_WALLETS:
-            analyze_and_notify(wallet)
-        time.sleep(20)
+            txs = get_recent_transactions(wallet)
+            if not txs:
+                continue
+
+            latest_sig = txs[0]["signature"]
+            if last_tx[wallet] is None:
+                last_tx[wallet] = latest_sig
+                continue
+
+            if latest_sig != last_tx[wallet]:
+                print(f"🔍 Nouvelle transaction pour {wallet}")
+                tx_detail = get_transaction_detail(latest_sig)
+
+                msg = f"💸 Nouvelle transaction détectée pour <code>{wallet}</code>\n\n"
+                msg += f"🔗 <a href='https://solscan.io/tx/{latest_sig}'>Voir sur Solscan</a>"
+
+                send_telegram_message(msg)
+                last_tx[wallet] = latest_sig
+
+        time.sleep(15)  # Vérifie toutes les 15 secondes
 
 
 if __name__ == "__main__":
-    if os.getenv("RUN_MODE") == "server":
-        app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-    else:
-        main_loop()
+    main()
+
