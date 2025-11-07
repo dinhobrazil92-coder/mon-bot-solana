@@ -2,7 +2,11 @@ services:
   - type: web
     name: solana-tracker
     env: python
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python tracker_bot.py"
-    autoDeploy: true
+    buildCommand: pip install requests flask
+    startCommand: python tracker_bot.py
+    envVars:
+      BOT_TOKEN: "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
