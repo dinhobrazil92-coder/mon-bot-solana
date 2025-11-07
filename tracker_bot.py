@@ -101,7 +101,6 @@ LAST_RPC_TIME = 0
 def rpc(method, params=None):
     global LAST_RPC_TIME
     if params is None: params = []
-    # Anti-rate-limit
     now = time.time()
     if now - LAST_RPC_TIME < 1.5:
         time.sleep(1.5 - (now - LAST_RPC_TIME))
@@ -257,10 +256,16 @@ def bot():
             print("Bot ERR:", e)
             time.sleep(5)
 
-# === FLASK ===
+# === FLASK (CORRIGÉ) ===
 app = Flask(__name__)
-@app.route("/"): return "ON"
-@app.route("/health"): return "OK", 200
+
+@app.route("/")
+def index():
+    return "ON"
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 # === LANCEMENT ===
 if __name__ == "__main__":
