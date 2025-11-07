@@ -3,8 +3,8 @@
 """
 Bot Telegram Tracker Solana avec Webhook Helius
 - Notifications instantanées : achat, vente, création de token (SOL, SPL, NFT)
+- Toutes les transactions envoyées directement à DEFAULT_CHAT_ID
 - Compatible Render
-- Supporte payload Helius dict ou liste
 """
 
 import os
@@ -18,7 +18,7 @@ from flask import Flask, request, jsonify
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
-DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # Chat global pour notifications
+DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # Chat global pour toutes les notifications
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -63,6 +63,7 @@ def send_message(chat_id, text):
         print(f"[TG] Exception: {e}")
 
 def broadcast_to_all(text):
+    """Envoie à tous les utilisateurs autorisés + chat global"""
     users = load_json(AUTHORIZED_FILE)
     for cid in users:
         send_message(cid, text)
@@ -70,6 +71,7 @@ def broadcast_to_all(text):
         send_message(DEFAULT_CHAT_ID, text)
 
 def send_telegram_notification(event):
+    """Notification simplifiée pour chat global"""
     msg_type = event.get("type") or "Transaction"
     if event.get("tokenStandard"):
         msg_type += f" ({event.get('tokenStandard')})"
@@ -145,8 +147,9 @@ def helius_webhook():
                 if is_authorized(cid):
                     send_message(cid, message)
 
-            # Notification globale
-            send_telegram_notification(event)
+            # ⚡ Envoi global à DEFAULT_CHAT_ID
+            if DEFAULT_CHAT_ID:
+                send_message(DEFAULT_CHAT_ID, message)
 
         except Exception as e:
             print(f"[Helius webhook] Erreur: {e}")
