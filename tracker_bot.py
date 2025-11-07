@@ -12,6 +12,11 @@ PORT = int(os.getenv("PORT", 10000))
 MY_CHAT_ID = "8228401361"
 SECRET_PASSWORD = "Business2026$"
 
+print("=== DEBUG BOT ===")
+print("BOT_TOKEN:", BOT_TOKEN)
+print("MY_CHAT_ID:", MY_CHAT_ID)
+print("==================")
+
 # DATA
 DATA_DIR = "data"
 if not os.path.exists(DATA_DIR):
@@ -76,22 +81,25 @@ def pre_authorize():
     save_json(AUTHORIZED_FILE, data)
     print("Pre-autorise: " + MY_CHAT_ID)
 
-# TELEGRAM
+# TELEGRAM (AVEC LOGS)
 def send(cid, text):
     url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage"
     payload = {"chat_id": cid, "text": text, "parse_mode": "HTML"}
     try:
+        print("ENVOI à", cid, ":", text[:50] + "...")
         r = requests.post(url, data=payload, timeout=10)
+        print("TG STATUS:", r.status_code)
         if r.status_code == 200:
-            print("Envoye a " + str(cid))
+            print("MESSAGE ENVOYÉ !")
         else:
-            print("TG ERR: " + str(r.status_code) + " " + r.text)
+            print("TG ERREUR:", r.text)
     except Exception as e:
-        print("TG Exception: " + str(e))
+        print("TG EXCEPTION:", str(e))
 
+# TEST FORCE
 def test_force():
     time.sleep(5)
-    send(MY_CHAT_ID, "BOT VIVANT !\n\nTest OK.\n/add <wallet>")
+    send(MY_CHAT_ID, "BOT VIVANT !\n\nTest force OK.\nEnvoie /add <wallet>")
 
 # RPC SOLANA
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
@@ -103,7 +111,9 @@ def rpc(method, params=None):
         r = requests.post(SOLANA_RPC, json=payload, timeout=15)
         r.raise_for_status()
         return r.json().get("result")
-    except: return None
+    except Exception as e:
+        print("RPC ERR:", str(e))
+        return None
 
 def get_signatures(w, l=10):
     return rpc("getSignaturesForAddress", [w, {"limit": l}]) or []
@@ -156,20 +166,18 @@ def tracker():
                 time.sleep(30)
                 continue
             for w in wallets:
-                sigs = get_signatures(w, 10)
+                sigs = get_signatures(w, 5)
                 for s in sigs:
                     sig = s.get("signature")
                     if not sig or sig in seen: continue
                     tx = get_transaction(sig)
                     if not tx: continue
 
-                    # Creation
                     mint = detect_creation(tx, w)
                     if mint:
                         msg = "NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>"
                         send(MY_CHAT_ID, msg)
 
-                    # Transfert
                     result = detect_transfer(tx, w)
                     if result:
                         action, mint, amt, dec = result
@@ -185,9 +193,9 @@ def tracker():
 
                     seen.add(sig)
                     save_set(SEEN_FILE, seen)
-            time.sleep(18)
+            time.sleep(20)
         except Exception as e:
-            print("Tracker ERR: " + str(e))
+            print("Tracker ERR:", str(e))
             time.sleep(10)
 
 # BOT
@@ -236,31 +244,14 @@ def bot():
                         subs[w].append(cid)
                         save_json(SUBSCRIPTIONS_FILE, subs)
                         send(cid, "Suivi : <code>" + w + "</code>")
-                elif cmd == "/my":
-                    mine = []
-                    for wallet_key, users in subs.items():
-                        if cid in users:
-                            mine.append(wallet_key)
-                    if mine:
-                        msg = "<b>Mes wallets :</b>\n"
-                        for wallet in mine:
-                            msg += "• <code>" + wallet + "</code>\n"
-                        send(cid, msg)
-                    else:
-                        send(cid, "Aucun")
         except Exception as e:
-            print("Bot ERR: " + str(e))
+            print("Bot ERR:", str(e))
             time.sleep(5)
 
 # FLASK
 app = Flask(__name__)
-@app.route("/")
-def index():
-    return "ON"
-
-@app.route("/health")
-def health():
-    return "OK", 200
+@app.route("/"): return "ON"
+@app.route("/health"): return "OK", 200
 
 # LANCEMENT
 if __name__ == "__main__":
@@ -268,5 +259,5 @@ if __name__ == "__main__":
     threading.Thread(target=test_force, daemon=True).start()
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
-    print("Bot lance")
+    print("Lancement complet...")
     app.run(host="0.0.0.0", port=PORT)
