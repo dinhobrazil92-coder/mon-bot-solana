@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Tracker Solana Pro
+Bot Telegram Tracker Solana Pro Debug
 - Notifications : SOL, SPL, NFT
-- Noms et images de NFT
-- Emoji par type de token
-- Notifications envoyées aux abonnés du wallet
+- Debug complet pour voir le flux des événements
 """
 
 import os
@@ -46,19 +44,17 @@ def save_json(file_path, data):
 
 # === TELEGRAM ===
 def send_message(chat_id, text, parse_mode="HTML"):
+    print(f"[DEBUG] Envoi message à {chat_id}: {text[:50]}…")
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": False
-            },
+            data={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
             timeout=10
         )
         if r.status_code != 200:
             print(f"[TG] Erreur {r.status_code}: {r.text}")
+        else:
+            print(f"[DEBUG] Message envoyé avec succès à {chat_id}")
     except Exception as e:
         print(f"[TG] Exception: {e}")
 
@@ -76,7 +72,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "✅ Bot Solana Pro actif avec webhook Helius"
+    return "✅ Bot Solana Pro Debug actif avec webhook Helius"
 
 @app.route("/health")
 def health():
@@ -86,13 +82,12 @@ def health():
 @app.route("/helius", methods=["POST"])
 def helius_webhook():
     payload = request.get_json()
+    print("[DEBUG] Webhook reçu :", json.dumps(payload, indent=2))
+
     if not payload:
         return "No data", 400
 
     subs = load_json(SUBSCRIPTIONS_FILE)
-    print(f"[Helius] Payload reçu: {json.dumps(payload, indent=2)}")
-
-    # Support liste ou dict
     if isinstance(payload, list):
         events = payload
     elif isinstance(payload, dict):
@@ -104,23 +99,18 @@ def helius_webhook():
         try:
             wallet = event.get("account") or event.get("fromUserAccount") or event.get("source") or "inconnu"
             tx_hash = event.get("signature") or event.get("txHash") or event.get("transactionHash") or "inconnu"
-
-            # Détection type token
             token_standard = event.get("tokenStandard", "SOL")
             emoji = "💎" if token_standard == "SOL" else "🪙" if token_standard == "SPL" else "🖼️"
 
-            # Montant en SOL si lamports, sinon tokenAmount
             if "lamports" in event:
                 amount = round(event.get("lamports", 0)/1e9, 9)
                 amount_str = f"{amount} SOL"
             else:
                 amount_str = str(event.get("amount") or event.get("tokenAmount") or "?")
 
-            # Nom ou mint
             mint = event.get("mint") or event.get("tokenAddress") or "?"
             name = event.get("name") or event.get("metadata", {}).get("name") or mint
             image = event.get("metadata", {}).get("image") or None
-
             action_type = event.get("type") or "Transaction"
             if token_standard != "SOL":
                 action_type += f" ({token_standard})"
@@ -134,9 +124,11 @@ def helius_webhook():
             if image:
                 message += f"\n🖼️ Image NFT: {image}"
 
-            # Envoi aux abonnés
+            print(f"[DEBUG] Abonnés pour {wallet}: {subs.get(wallet, [])}")
+
             for cid in subs.get(wallet, []):
                 if is_authorized(cid):
+                    print(f"[DEBUG] Envoi notification à {cid}")
                     send_message(cid, message)
 
         except Exception as e:
@@ -166,7 +158,6 @@ def bot():
                 parts = text.split(maxsplit=1)
                 cmd = parts[0].lower()
                 args = parts[1] if len(parts) > 1 else ""
-
                 subs = load_json(SUBSCRIPTIONS_FILE)
 
                 if cmd == "/login" and args == PASSWORD:
@@ -221,7 +212,7 @@ def bot():
 
 # === MAIN ===
 if __name__ == "__main__":
-    print("🚀 Bot Solana Pro lancé (Webhook + Telegram)")
+    print("🚀 Bot Solana Pro Debug lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
 
