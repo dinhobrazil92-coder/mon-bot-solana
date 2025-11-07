@@ -70,7 +70,6 @@ def broadcast_to_all(text):
         send_message(DEFAULT_CHAT_ID, text)
 
 def send_telegram_notification(event):
-    """Notification simplifiée pour chat global."""
     msg_type = event.get("type") or "Transaction"
     if event.get("tokenStandard"):
         msg_type += f" ({event.get('tokenStandard')})"
@@ -234,6 +233,7 @@ if __name__ == "__main__":
     print("🚀 Bot Solana lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
 
 
 
