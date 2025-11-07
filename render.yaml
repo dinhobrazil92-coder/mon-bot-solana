@@ -7,6 +7,8 @@ services:
     envVars:
       BOT_TOKEN:
         value: "8104197353:AAEkh1gVe8eH9z48owFUc1KUENLVl7NG60k"
+      PASSWORD:
+        value: "Business2026$"
       PORT:
         value: "10000"
     disk:
