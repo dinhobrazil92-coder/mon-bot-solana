@@ -1,14 +1,14 @@
 services:
   - type: web
-    name: solana-tracker
+    name: solana-helius
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python tracker_bot.py
     envVars:
       BOT_TOKEN:
         value: "8104197353:AAEkh1gVe8eH9z48owFUc1KUENLVl7NG60k"
-      PASSWORD:
-        value: "Business2026$"
+      HELIUS_KEY:
+        value: "c888ba69-de31-43b7-b6c6-f6f841351f56"
       PORT:
         value: "10000"
     disk:
