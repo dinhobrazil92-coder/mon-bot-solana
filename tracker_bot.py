@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Tracker Solana Pro Debug
-- Notifications : SOL, SPL, NFT
-- BOT_TOKEN intégré
-- Mot de passe caché via variable d'environnement
-- Debug complet pour suivre chaque notification
+Bot Telegram Tracker Solana Pro
+- Notifications SOL, SPL, NFT
+- BOT_TOKEN et chat_id intégrés
+- Mot de passe caché pour accès
+- Debug complet pour notifications
 """
 
 import os
@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify
 
 # === CONFIG ===
 BOT_TOKEN = "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+CHAT_ID_TEST = 8228401361  # ton chat_id
 PASSWORD = os.getenv("BOT_PASSWORD", "Business2026$")  # mot de passe caché via variable d'environnement
 PORT = int(os.getenv("PORT", 10000))
 
@@ -74,7 +75,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "✅ Bot Solana Pro Debug actif avec webhook Helius"
+    return "✅ Bot Solana actif avec webhook Helius"
 
 @app.route("/health")
 def health():
@@ -89,21 +90,26 @@ def helius_webhook():
     if not payload:
         return "No data", 400
 
+    # Charger les abonnements
     subs = load_json(SUBSCRIPTIONS_FILE)
-    if isinstance(payload, list):
-        events = payload
-    elif isinstance(payload, dict):
+
+    # Récupérer les events selon le format Helius
+    if isinstance(payload, dict):
         events = payload.get("events") or payload.get("tokenTransfers") or payload.get("nftTransfers") or []
+    elif isinstance(payload, list):
+        events = payload
     else:
         events = []
 
     for event in events:
         try:
-            wallet = event.get("account") or event.get("fromUserAccount") or event.get("source") or "inconnu"
-            tx_hash = event.get("signature") or event.get("txHash") or event.get("transactionHash") or "inconnu"
+            # Wallet principal pour le suivi
+            wallet = event.get("account") or event.get("fromUserAccount") or event.get("toUserAccount") or "inconnu"
+            tx_hash = event.get("signature") or event.get("txHash") or "inconnu"
             token_standard = event.get("tokenStandard", "SOL")
             emoji = "💎" if token_standard == "SOL" else "🪙" if token_standard == "SPL" else "🖼️"
 
+            # Montant
             if "lamports" in event:
                 amount = round(event.get("lamports", 0)/1e9, 9)
                 amount_str = f"{amount} SOL"
@@ -126,19 +132,22 @@ def helius_webhook():
             if image:
                 message += f"\n🖼️ Image NFT: {image}"
 
-            print(f"[DEBUG] Abonnés pour {wallet}: {subs.get(wallet, [])}")
+            # Debug abonnés
+            print(f"[DEBUG] Wallet: {wallet}")
+            print(f"[DEBUG] Abonnés pour ce wallet: {subs.get(wallet, [])}")
 
-            for cid in subs.get(wallet, []):
-                if is_authorized(cid):
-                    print(f"[DEBUG] Envoi notification à {cid}")
-                    send_message(cid, message)
+            # Envoi au chat_id fixé
+            if is_authorized(CHAT_ID_TEST):
+                send_message(CHAT_ID_TEST, message)
+            else:
+                print(f"[DEBUG] Chat ID {CHAT_ID_TEST} NON autorisé")
 
         except Exception as e:
             print(f"[Helius webhook] Erreur: {e}")
 
     return jsonify({"status": "ok"}), 200
 
-# === BOT TELEGRAM ===
+# === BOT TELEGRAM pour login et gestion des wallets ===
 def bot():
     print("[Bot] Démarrage du polling Telegram...")
     offset = 0
@@ -214,7 +223,7 @@ def bot():
 
 # === MAIN ===
 if __name__ == "__main__":
-    print("🚀 Bot Solana Pro Debug lancé (Webhook + Telegram)")
+    print("🚀 Bot Solana Pro lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
 
