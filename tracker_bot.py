@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Tracker Solana avec Webhook Helius
-- Notifications instantanées : achat, vente, création de token (SOL, SPL, NFT)
-- Toutes les transactions envoyées directement à DEFAULT_CHAT_ID
-- Compatible Render
+Bot Telegram Tracker Solana Pro
+- Notifications : SOL, SPL, NFT
+- Noms et images de NFT
+- Emoji par type de token
+- Notifications envoyées aux abonnés du wallet
 """
 
 import os
@@ -18,7 +19,6 @@ from flask import Flask, request, jsonify
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
-DEFAULT_CHAT_ID = os.getenv("CHAT_ID", None)  # Chat global pour toutes les notifications
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -45,15 +45,15 @@ def save_json(file_path, data):
         print(f"[save_json] Erreur {file_path}: {e}")
 
 # === TELEGRAM ===
-def send_message(chat_id, text):
+def send_message(chat_id, text, parse_mode="HTML"):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={
                 "chat_id": chat_id,
                 "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True
+                "parse_mode": parse_mode,
+                "disable_web_page_preview": False
             },
             timeout=10
         )
@@ -61,22 +61,6 @@ def send_message(chat_id, text):
             print(f"[TG] Erreur {r.status_code}: {r.text}")
     except Exception as e:
         print(f"[TG] Exception: {e}")
-
-def broadcast_to_all(text):
-    """Envoie à tous les utilisateurs autorisés + chat global"""
-    users = load_json(AUTHORIZED_FILE)
-    for cid in users:
-        send_message(cid, text)
-    if DEFAULT_CHAT_ID:
-        send_message(DEFAULT_CHAT_ID, text)
-
-def send_telegram_notification(event):
-    """Notification simplifiée pour chat global"""
-    msg_type = event.get("type") or "Transaction"
-    if event.get("tokenStandard"):
-        msg_type += f" ({event.get('tokenStandard')})"
-    message = f"🔔 Nouvelle transaction détectée : {msg_type}"
-    broadcast_to_all(message)
 
 # === AUTH ===
 def is_authorized(chat_id):
@@ -92,7 +76,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "✅ Bot Solana actif avec webhook Helius"
+    return "✅ Bot Solana Pro actif avec webhook Helius"
 
 @app.route("/health")
 def health():
@@ -121,6 +105,10 @@ def helius_webhook():
             wallet = event.get("account") or event.get("fromUserAccount") or event.get("source") or "inconnu"
             tx_hash = event.get("signature") or event.get("txHash") or event.get("transactionHash") or "inconnu"
 
+            # Détection type token
+            token_standard = event.get("tokenStandard", "SOL")
+            emoji = "💎" if token_standard == "SOL" else "🪙" if token_standard == "SPL" else "🖼️"
+
             # Montant en SOL si lamports, sinon tokenAmount
             if "lamports" in event:
                 amount = round(event.get("lamports", 0)/1e9, 9)
@@ -128,28 +116,28 @@ def helius_webhook():
             else:
                 amount_str = str(event.get("amount") or event.get("tokenAmount") or "?")
 
+            # Nom ou mint
             mint = event.get("mint") or event.get("tokenAddress") or "?"
+            name = event.get("name") or event.get("metadata", {}).get("name") or mint
+            image = event.get("metadata", {}).get("image") or None
 
             action_type = event.get("type") or "Transaction"
-            if event.get("tokenStandard"):
-                action_type += f" ({event.get('tokenStandard')})"
+            if token_standard != "SOL":
+                action_type += f" ({token_standard})"
 
-            message = (
-                f"💰 <b>{action_type}</b>\n\n"
-                f"👛 Wallet: <code>{wallet}</code>\n"
-                f"🪙 Token: <code>{mint}</code>\n"
-                f"💵 Montant: <code>{amount_str}</code>\n"
-                f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir la transaction</a>"
-            )
+            message = f"{emoji} <b>{action_type}</b>\n\n" \
+                      f"👛 Wallet: <code>{wallet}</code>\n" \
+                      f"🪙 Token: <b>{name}</b> (<code>{mint}</code>)\n" \
+                      f"💵 Montant: <code>{amount_str}</code>\n" \
+                      f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir transaction</a>"
+
+            if image:
+                message += f"\n🖼️ Image NFT: {image}"
 
             # Envoi aux abonnés
             for cid in subs.get(wallet, []):
                 if is_authorized(cid):
                     send_message(cid, message)
-
-            # ⚡ Envoi global à DEFAULT_CHAT_ID
-            if DEFAULT_CHAT_ID:
-                send_message(DEFAULT_CHAT_ID, message)
 
         except Exception as e:
             print(f"[Helius webhook] Erreur: {e}")
@@ -233,9 +221,10 @@ def bot():
 
 # === MAIN ===
 if __name__ == "__main__":
-    print("🚀 Bot Solana lancé (Webhook + Telegram)")
+    print("🚀 Bot Solana Pro lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
 
 
 
