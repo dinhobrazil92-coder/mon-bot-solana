@@ -12,7 +12,6 @@ import time
 import threading
 import json
 import requests
-from datetime import datetime
 from flask import Flask
 
 # === CONFIG ===
@@ -92,6 +91,12 @@ def save_update_id(uid):
 def is_authorized(chat_id):
     return str(chat_id) == MY_CHAT_ID or str(chat_id) in load_json(AUTHORIZED_FILE)
 
+def pre_authorize():
+    data = load_json(AUTHORIZED_FILE)
+    data[MY_CHAT_ID] = True
+    save_json(AUTHORIZED_FILE, data)
+    print(f"[OK] Pré-autorisé : {MY_CHAT_ID}")
+
 def authorize(chat_id):
     data = load_json(AUTHORIZED_FILE)
     data[str(chat_id)] = True
@@ -124,7 +129,7 @@ def send_message(chat_id, text):
 # === TEST AUTO ===
 def auto_test():
     time.sleep(10)
-    send_message(MY_CHAT_ID, "🚀 BOT DÉMARRÉ !\n\nTest OK.\nEnvoie /add <wallet> pour tracker.")
+    send_message(MY_CHAT_ID, "BOT DÉMARRÉ !\n\nTest OK.\nEnvoie /add <wallet> pour tracker.")
 
 # === RPC SOLANA ===
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
@@ -218,7 +223,7 @@ def tracker():
                     # Création
                     creation = detect_token_creation(tx, wallet)
                     if creation:
-                        msg = f"🚨 <b>NOUVEAU TOKEN CRÉÉ</b>\n\n<a href=\"https://solscan.io/tx/{sig}\">Voir tx</a>\n<code>{wallet[:8]}...{wallet[-6:]}</code>\n<code>{creation[:8]}...{creation[-6:]}</code>"
+                        msg = f"NOUVEAU TOKEN CRÉÉ\n\n<a href=\"https://solscan.io/tx/{sig}\">Voir tx</a>\n<code>{wallet[:8]}...{wallet[-6:]}</code>\n<code>{creation[:8]}...{creation[-6:]}</code>"
                         subs = load_json(SUBSCRIPTIONS_FILE)
                         for cid in subs.get(wallet, []):
                             if is_authorized(cid):
@@ -236,7 +241,7 @@ def tracker():
                             amount_str = f"{amount:,.8f}".rstrip("0").rstrip(".")
                         except:
                             amount_str = str(amount_raw)
-                        msg = f"🚨 <b>{action}</b>\n\n<a href=\"https://solscan.io/tx/{sig}\">Voir tx</a>\n<code>{wallet[:8]}...{wallet[-6:]}</code>\n<code>{mint[:8]}...{mint[-6:]}</code>\n<code>{amount_str}</code>"
+                        msg = f"<b>{action}</b>\n\n<a href=\"https://solscan.io/tx/{sig}\">Voir tx</a>\n<code>{wallet[:8]}...{wallet[-6:]}</code>\n<code>{mint[:8]}...{mint[-6:]}</code>\n<code>{amount_str}</code>"
                         subs = load_json(SUBSCRIPTIONS_FILE)
                         for cid in subs.get(wallet, []):
                             if is_authorized(cid):
@@ -265,7 +270,7 @@ def bot():
                 offset = update["update_id"] + 1
                 save_update_id(offset)
                 msg = update.get("message") or {}
-                chat_id = msg.get("chat", {}).get("type") == "private" and msg.get("chat", {}).get("id")
+                chat_id = msg.get("chat", {}).get("id")
                 text = (msg.get("text") or "").strip()
                 if not chat_id or not text.startswith("/"):
                     continue
@@ -275,10 +280,10 @@ def bot():
 
                 if cmd == "/login" and args == PASSWORD:
                     authorize(chat_id)
-                    send_message(chat_id, "✅ Accès autorisé !\n\n/add <wallet> pour tracker.")
+                    send_message(chat_id, "Accès autorisé !\n\n/add <wallet>")
                     continue
                 if not is_authorized(chat_id):
-                    send_message(chat_id, f"🔒 Connecte-toi :\n<code>/login {PASSWORD}</code>")
+                    send_message(chat_id, f"Connecte-toi :\n<code>/login {PASSWORD}</code>")
                     continue
 
                 subs = load_json(SUBSCRIPTIONS_FILE)
@@ -286,7 +291,7 @@ def bot():
                 if cmd == "/add" and args:
                     w = args.strip()
                     if len(w) < 32:
-                        send_message(chat_id, "⚠️ Wallet invalide.")
+                        send_message(chat_id, "Wallet invalide.")
                         continue
                     current = load_list(WALLETS_FILE)
                     if w not in current:
@@ -297,9 +302,9 @@ def bot():
                     if chat_id not in subs[w]:
                         subs[w].append(chat_id)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(chat_id, f"✅ Suivi activé :\n<code>{w}</code>")
+                        send_message(chat_id, f"Suivi activé :\n<code>{w}</code>")
                     else:
-                        send_message(chat_id, "ℹ️ Déjà suivi.")
+                        send_message(chat_id, "Déjà suivi.")
 
                 elif cmd == "/remove" and args:
                     w = args.strip()
@@ -308,9 +313,9 @@ def bot():
                         if not subs[w]:
                             del subs[w]
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send_message(chat_id, f"✅ Arrêt suivi :\n<code>{w}</code>")
+                        send_message(chat_id, f"Arrêt suivi :\n<code>{w}</code>")
                     else:
-                        send_message(chat_id, "❌ Pas suivi.")
+                        send_message(chat_id, "Pas suivi.")
 
                 elif cmd == "/my":
                     my = [w for w, users in subs.items() if chat_id in users]
@@ -320,18 +325,7 @@ def bot():
                             txt += f"• <code>{w}</code>\n"
                         send_message(chat_id, txt)
                     else:
-                        send_message(chat_id, "📭 Aucun wallet suivi.")
-
-                elif cmd == "/list":
-                    wallets = load_list(WALLETS_FILE)
-                    if wallets:
-                        txt = "<b>Wallets suivis :</b>\n\n"
-                        for w in wallets:
-                            count = len([u for u in subs.get(w, []) if is_authorized(u)])
-                            txt += f"• <code>{w}</code> ({count} abonnés)\n"
-                        send_message(chat_id, txt)
-                    else:
-                        send_message(chat_id, "📭 Aucun wallet.")
+                        send_message(chat_id, "Aucun wallet suivi.")
 
         except Exception as e:
             print(f"[ERR] Bot: {e}")
@@ -351,7 +345,7 @@ def health():
 # === MAIN ===
 if __name__ == "__main__":
     print("Démarrage bot...")
-    pre_authorize()
+    pre_authorize()  # CORRIGÉ : fonction définie avant
     threading.Thread(target=auto_test, daemon=True).start()
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
