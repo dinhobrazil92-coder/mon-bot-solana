@@ -3,7 +3,9 @@
 """
 Bot Telegram Tracker Solana Pro Debug
 - Notifications : SOL, SPL, NFT
-- Debug complet pour voir le flux des événements
+- BOT_TOKEN intégré
+- Mot de passe caché via variable d'environnement
+- Debug complet pour suivre chaque notification
 """
 
 import os
@@ -14,8 +16,8 @@ import requests
 from flask import Flask, request, jsonify
 
 # === CONFIG ===
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY")
-PASSWORD = os.getenv("PASSWORD", "Business2026$")
+BOT_TOKEN = "8017958637:AAHGc7Zkw2B63GyR1nbnuckx3Hc8h4eelRY"
+PASSWORD = os.getenv("BOT_PASSWORD", "Business2026$")  # mot de passe caché via variable d'environnement
 PORT = int(os.getenv("PORT", 10000))
 
 DATA_DIR = "data"
@@ -44,7 +46,7 @@ def save_json(file_path, data):
 
 # === TELEGRAM ===
 def send_message(chat_id, text, parse_mode="HTML"):
-    print(f"[DEBUG] Envoi message à {chat_id}: {text[:50]}…")
+    print(f"[DEBUG] Tentative envoi à {chat_id}: {text[:50]}…")
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -215,7 +217,6 @@ if __name__ == "__main__":
     print("🚀 Bot Solana Pro Debug lancé (Webhook + Telegram)")
     threading.Thread(target=bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
-
 
 
 
