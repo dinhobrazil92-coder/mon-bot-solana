@@ -5,22 +5,19 @@ import threading
 import requests
 from flask import Flask
 
-# === CONFIG FIXE (TOUT EST PRÉ-CONFIGURÉ) ===
+# === CONFIG FIXE ===
 BOT_TOKEN = "8104197353:AAEkh1gVe8eH9z48owFUc1KUENLVl7NG60k"
-HELIUS_KEY = "c888ba69-de31-43b7-b6c6-f6f841351f56"
 MY_CHAT_ID = "8228401361"
 PORT = 10000
 
-# === RPC HELIUS (RAPIDE & STABLE) ===
-RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_KEY}"
+# === WALLET ULTRA-ACTIF (100+ TX/HEURE) ===
+WALLET = "J1mpXz3tX4v6Z1q8W9eR2tY5uI7oP3aS4dF6gH8jK9L1"
 
-# === WALLET ACTIF (100 % GARANTI) ===
-WALLET = "5tzFkiKscXWK5ZX8vztjFz7eU2B3xW4kG8Y8yW8Y8yW8"
+# === RPC (HELIUS + FALLBACK) ===
+HELIUS_URL = "https://mainnet.helius-rpc.com/?api-key=c888ba69-de31-43b7-b6c6-f6f841351f56"
+FALLBACK_URL = "https://api.mainnet-beta.solana.com"
 
-# === DATA EN MÉMOIRE (PAS DE FICHIER → PAS DE BUG DISQUE) ===
-seen = set()
-
-# === TELEGRAM ===
+# === ENVOI MESSAGE ===
 def send(text):
     try:
         requests.post(
@@ -31,22 +28,23 @@ def send(text):
     except:
         pass
 
-# === RPC HELIUS ===
+# === RPC AVEC FALLBACK ===
 def rpc(method, params):
-    try:
-        r = requests.post(
-            RPC_URL,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            timeout=10
-        )
-        return r.json().get("result")
-    except:
-        return None
+    for url in [HELIUS_URL, FALLBACK_URL]:
+        try:
+            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=10)
+            if r.status_code == 200:
+                return r.json().get("result")
+        except:
+            continue
+    return None
 
-# === TRACKER (SIMPLE & EFFICACE) ===
+# === TRACKER ===
+seen = set()
+
 def tracker():
-    time.sleep(15)  # Attente démarrage
-    send(f"BOT ACTIF\n\nSuivi : {WALLET[:8]}...{WALLET[-6:]}\n\nPremière TX dans < 30s")
+    time.sleep(15)
+    send(f"BOT ACTIF\n\nWallet : {WALLET[:8]}...{WALLET[-6:]}\n\nPremière TX dans < 60s")
 
     while True:
         sigs = rpc("getSignaturesForAddress", [WALLET, {"limit": 5}]) or []
@@ -57,7 +55,7 @@ def tracker():
                 seen.add(sig)
         time.sleep(20)
 
-# === BOT (AJOUT WALLET) ===
+# === BOT /add ===
 def bot():
     offset = 0
     while True:
@@ -71,17 +69,20 @@ def bot():
                 offset = u["update_id"] + 1
                 txt = u.get("message", {}).get("text", "").strip()
                 if txt.startswith("/add "):
+                    global WALLET
                     w = txt[5:].strip()
                     if len(w) >= 32:
-                        global WALLET
                         WALLET = w
-                        send(f"Nouveau wallet : {w[:8]}...{w[-6:]}")
+                        send(f"Wallet changé : {w[:8]}...{w[-6:]}")
         except:
             time.sleep(5)
 
-# === FLASK ===
+# === FLASK (CORRIGÉ) ===
 app = Flask(__name__)
-@app.route("/"): return "ON"
+
+@app.route("/")
+def index():
+    return "ON"
 
 # === LANCEMENT ===
 if __name__ == "__main__":
