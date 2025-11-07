@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bot Telegram Tracker Solana avec Webhook Helius + système de diffusion
+Bot Telegram Tracker Solana avec Webhook Helius
 - Notifications instantanées : achat, vente, création de token
-- Compatible Render (Flask + port binding)
+- Compatible Render
 """
 
 import os
@@ -13,7 +13,7 @@ import threading
 import requests
 from flask import Flask, request
 
-# === CONFIGURATION ===
+# === CONFIG ===
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TON_TOKEN_TELEGRAM_ICI")
 PASSWORD = os.getenv("PASSWORD", "Business2026$")
 PORT = int(os.getenv("PORT", 10000))
@@ -24,7 +24,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
 SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
 
-# === OUTILS JSON ===
+# === OUTILS FICHIERS ===
 def load_json(file_path):
     if not os.path.exists(file_path):
         return {}
@@ -44,11 +44,8 @@ def save_json(file_path, data):
 
 # === TELEGRAM ===
 def send_message(chat_id, text):
-    if not BOT_TOKEN:
-        print("[send_message] BOT_TOKEN manquant")
-        return
     try:
-        resp = requests.post(
+        r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={
                 "chat_id": chat_id,
@@ -58,14 +55,18 @@ def send_message(chat_id, text):
             },
             timeout=10
         )
-        if resp.status_code != 200:
-            print(f"[TG] Erreur {resp.status_code}: {resp.text}")
-        else:
-            print(f"[TG] ✅ Message envoyé à {chat_id}")
+        if r.status_code != 200:
+            print(f"[TG] Erreur {r.status_code}: {r.text}")
     except Exception as e:
         print(f"[TG] Exception: {e}")
 
-# === AUTHENTIFICATION ===
+def broadcast_to_all(text):
+    """Envoie un message à tous les utilisateurs autorisés."""
+    users = load_json(AUTHORIZED_FILE)
+    for cid in users:
+        send_message(cid, text)
+
+# === AUTH ===
 def is_authorized(chat_id):
     return str(chat_id) in load_json(AUTHORIZED_FILE)
 
@@ -74,31 +75,7 @@ def authorize(chat_id):
     data[str(chat_id)] = True
     save_json(AUTHORIZED_FILE, data)
 
-# === BROADCAST / DIFFUSION ===
-def broadcast_message(text, delay=0.08):
-    """
-    Envoie un message à tous les utilisateurs autorisés.
-    """
-    auth = load_json(AUTHORIZED_FILE)
-    if not auth:
-        print("[broadcast] Aucun utilisateur autorisé.")
-        return 0
-
-    success = 0
-    total = len(auth.keys())
-    print(f"[broadcast] Envoi à {total} utilisateurs...")
-    for cid_str in list(auth.keys()):
-        try:
-            cid = int(cid_str) if str(cid_str).isdigit() else cid_str
-            send_message(cid, text)
-            success += 1
-            time.sleep(delay)
-        except Exception as e:
-            print(f"[broadcast] Erreur envoi à {cid_str}: {e}")
-    print(f"[broadcast] Terminé — {success}/{total} messages envoyés.")
-    return success
-
-# === SERVEUR FLASK ===
+# === FLASK APP ===
 app = Flask(__name__)
 
 @app.route("/")
@@ -112,6 +89,7 @@ def health():
 # === WEBHOOK HELIUS ===
 @app.route("/helius", methods=["POST"])
 def helius_webhook():
+    """Réception d'événements de Helius"""
     data = request.get_json()
     if not data:
         return "No data", 400
@@ -135,16 +113,20 @@ def helius_webhook():
                 f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>Voir la transaction</a>"
             )
 
-            # Envoi aux abonnés du wallet
+            # Tous les abonnés du wallet reçoivent la notif
             for cid in subs.get(wallet, []):
                 if is_authorized(cid):
                     send_message(cid, message)
+
+            # Option : envoyer à tous les utilisateurs autorisés
+            # broadcast_to_all(message)
+
         except Exception as e:
-            print(f"[Helius webhook] Erreur lors du traitement: {e}")
+            print(f"[Helius webhook] Erreur: {e}")
 
     return "OK", 200
 
-# === BOUCLE BOT TELEGRAM ===
+# === BOT TELEGRAM ===
 def bot():
     print("[Bot] Démarrage du polling Telegram...")
     offset = 0
@@ -155,9 +137,7 @@ def bot():
                 params={"offset": offset, "timeout": 30},
                 timeout=40
             ).json()
-
-            updates = resp.get("result", [])
-            for update in updates:
+            for update in resp.get("result", []):
                 offset = update["update_id"] + 1
                 msg = update.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
@@ -171,17 +151,14 @@ def bot():
 
                 subs = load_json(SUBSCRIPTIONS_FILE)
 
-                # === Login ===
                 if cmd == "/login" and args == PASSWORD:
                     authorize(chat_id)
-                    send_message(chat_id, "🔓 Accès autorisé !\n\nCommandes :\n/add WALLET\n/remove WALLET\n/list\n/my\n/announce MESSAGE")
+                    send_message(chat_id, "🔓 Accès autorisé !\n\nCommandes :\n/add WALLET\n/remove WALLET\n/list\n/my")
                     continue
-
                 if not is_authorized(chat_id):
                     send_message(chat_id, f"🔐 Connecte-toi : /login {PASSWORD}")
                     continue
 
-                # === Ajouter un wallet ===
                 if cmd == "/add" and args:
                     wallet = args.strip()
                     if len(wallet) < 32:
@@ -196,7 +173,6 @@ def bot():
                     else:
                         send_message(chat_id, f"✅ Déjà abonné à <code>{wallet}</code>")
 
-                # === Supprimer un wallet ===
                 elif cmd == "/remove" and args:
                     wallet = args.strip()
                     if wallet in subs and chat_id in subs[wallet]:
@@ -206,7 +182,6 @@ def bot():
                     else:
                         send_message(chat_id, "Pas d'abonnement trouvé.")
 
-                # === Liste tous les wallets ===
                 elif cmd == "/list":
                     wallets = list(subs.keys())
                     if not wallets:
@@ -215,19 +190,12 @@ def bot():
                         msg = "<b>📜 Wallets suivis :</b>\n" + "\n".join(wallets)
                         send_message(chat_id, msg)
 
-                # === Liste mes abonnements ===
                 elif cmd == "/my":
                     my = [w for w, users in subs.items() if chat_id in users]
                     if my:
                         send_message(chat_id, "<b>👤 Tes abonnements :</b>\n" + "\n".join(my))
                     else:
                         send_message(chat_id, "Tu n'es abonné à aucun wallet.")
-
-                # === Diffusion ===
-                elif cmd in ("/announce", "/broadcast") and args:
-                    text_to_send = args.strip()
-                    send_message(chat_id, f"✅ Diffusion en cours à tous les utilisateurs autorisés...")
-                    broadcast_message(text_to_send)
 
         except Exception as e:
             print(f"[Bot] Erreur : {e}")
