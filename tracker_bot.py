@@ -14,13 +14,14 @@ SECRET_PASSWORD = "Business2026$"
 
 # DATA
 DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-AUTHORIZED_FILE = f"{DATA_DIR}/authorized.json"
-SUBSCRIPTIONS_FILE = f"{DATA_DIR}/subscriptions.json"
-WALLETS_FILE = f"{DATA_DIR}/wallets.txt"
-SEEN_FILE = f"{DATA_DIR}/seen.txt"
-UPDATE_ID_FILE = f"{DATA_DIR}/update_id.txt"
+AUTHORIZED_FILE = DATA_DIR + "/authorized.json"
+SUBSCRIPTIONS_FILE = DATA_DIR + "/subscriptions.json"
+WALLETS_FILE = DATA_DIR + "/wallets.txt"
+SEEN_FILE = DATA_DIR + "/seen.txt"
+UPDATE_ID_FILE = DATA_DIR + "/update_id.txt"
 
 # FICHIERS
 def load_json(path):
@@ -73,23 +74,24 @@ def pre_authorize():
     data = load_json(AUTHORIZED_FILE)
     data[MY_CHAT_ID] = True
     save_json(AUTHORIZED_FILE, data)
-    print("Pré-autorisé:", MY_CHAT_ID)
+    print("Pre-autorise: " + MY_CHAT_ID)
 
 # TELEGRAM
 def send(cid, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage"
+    payload = {"chat_id": cid, "text": text, "parse_mode": "HTML"}
     try:
-        r = requests.post(url, data={"chat_id": cid, "text": text, "parse_mode": "HTML"}, timeout=10)
+        r = requests.post(url, data=payload, timeout=10)
         if r.status_code == 200:
-            print("Envoyé à", cid)
+            print("Envoye a " + str(cid))
         else:
-            print("TG ERR:", r.status_code, r.text)
+            print("TG ERR: " + str(r.status_code) + " " + r.text)
     except Exception as e:
-        print("TG Exception:", e)
+        print("TG Exception: " + str(e))
 
 def test_force():
     time.sleep(5)
-    send(MY_CHAT_ID, "<b>BOT VIVANT !</b>\n\nTest force OK.\nEnvoie /add <wallet>")
+    send(MY_CHAT_ID, "BOT VIVANT !\n\nTest OK.\n/add <wallet>")
 
 # RPC SOLANA
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
@@ -97,7 +99,8 @@ SOLANA_RPC = "https://api.mainnet-beta.solana.com"
 def rpc(method, params=None):
     if params is None: params = []
     try:
-        r = requests.post(SOLANA_RPC, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=15)
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        r = requests.post(SOLANA_RPC, json=payload, timeout=15)
         r.raise_for_status()
         return r.json().get("result")
     except: return None
@@ -108,17 +111,19 @@ def get_signatures(w, l=10):
 def get_transaction(s):
     return rpc("getTransaction", [s, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
 
-# DÉTECTION
+# DETECTION
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 MINT_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 
 def detect_creation(tx, w):
     if not tx: return None
     for i in tx.get("transaction", {}).get("message", {}).get("instructions", []):
-        if i.get("programId") == MINT_PROGRAM and i.get("parsed", {}).get("type") == "initializeMint":
-            info = i.get("parsed", {}).get("info", {})
-            if info.get("mintAuthority") == w:
-                return info.get("mint")
+        if i.get("programId") == MINT_PROGRAM:
+            parsed = i.get("parsed", {})
+            if parsed.get("type") == "initializeMint":
+                info = parsed.get("info", {})
+                if info.get("mintAuthority") == w:
+                    return info.get("mint")
     return None
 
 def detect_transfer(tx, w):
@@ -127,19 +132,22 @@ def detect_transfer(tx, w):
     for inner in tx.get("meta", {}).get("innerInstructions", []):
         all_i.extend(inner.get("instructions", []))
     for i in all_i:
-        if i.get("programId") == TOKEN_PROGRAM and i.get("parsed", {}).get("type") in ("transfer", "transferChecked"):
-            info = i.get("parsed", {}).get("info", {})
-            src, dst = info.get("source"), info.get("destination")
-            mint = info.get("mint") or "?"
-            amt = info.get("amount")
-            dec = info.get("tokenAmount", {}).get("decimals") if "tokenAmount" in info else None
-            if dst == w: return "ACHAT", mint, amt, dec
-            if src == w: return "VENTE", mint, amt, dec
+        if i.get("programId") == TOKEN_PROGRAM:
+            parsed = i.get("parsed", {})
+            if parsed.get("type") in ("transfer", "transferChecked"):
+                info = parsed.get("info", {})
+                src = info.get("source")
+                dst = info.get("destination")
+                mint = info.get("mint") or "?"
+                amt = info.get("amount")
+                dec = info.get("tokenAmount", {}).get("decimals") if "tokenAmount" in info else None
+                if dst == w: return "ACHAT", mint, amt, dec
+                if src == w: return "VENTE", mint, amt, dec
     return None
 
 # TRACKER
 def tracker():
-    print("Tracker démarré")
+    print("Tracker demarre")
     seen = load_set(SEEN_FILE)
     while True:
         try:
@@ -155,12 +163,13 @@ def tracker():
                     tx = get_transaction(sig)
                     if not tx: continue
 
-                    # Création → SANS :=
+                    # Creation
                     mint = detect_creation(tx, w)
                     if mint:
-                        send(MY_CHAT_ID, "NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>")
+                        msg = "NOUVEAU TOKEN !\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>"
+                        send(MY_CHAT_ID, msg)
 
-                    # Transfert → SANS :=
+                    # Transfert
                     result = detect_transfer(tx, w)
                     if result:
                         action, mint, amt, dec = result
@@ -171,37 +180,41 @@ def tracker():
                                 amount = str(int(amt) / 1000000000).rstrip("0").rstrip(".")
                         except:
                             amount = str(amt)
-                        send(MY_CHAT_ID, "<b>" + action + "</b>\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>\n<code>" + amount + "</code>")
+                        msg = "<b>" + action + "</b>\n<a href=\"https://solscan.io/tx/" + sig + "\">Voir</a>\n<code>" + w[:8] + "..." + w[-6:] + "</code>\n<code>" + amount + "</code>"
+                        send(MY_CHAT_ID, msg)
 
                     seen.add(sig)
                     save_set(SEEN_FILE, seen)
             time.sleep(18)
         except Exception as e:
-            print("Tracker ERR:", e)
+            print("Tracker ERR: " + str(e))
             time.sleep(10)
 
 # BOT
 def bot():
-    print("Bot polling démarré")
+    print("Bot polling demarre")
     offset = load_update_id()
     while True:
         try:
-            up = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=40).json()
-            for u in up.get("result", []):
+            url = "https://api.telegram.org/bot" + BOT_TOKEN + "/getUpdates"
+            r = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=40)
+            data = r.json()
+            for u in data.get("result", []):
                 offset = u["update_id"] + 1
                 save_update_id(offset)
-                m = u.get("message") or {}
+                m = u.get("message", {})
                 cid = m.get("chat", {}).get("id")
-                txt = (m.get("text") or "").strip()
+                txt = m.get("text", "").strip()
                 if not txt.startswith("/"): continue
-                cmd = txt.split()[0].lower()
-                args = " ".join(txt.split()[1:])
+                parts = txt.split(" ", 1)
+                cmd = parts[0].lower()
+                args = parts[1] if len(parts) > 1 else ""
 
                 if cmd == "/login" and args == SECRET_PASSWORD:
                     d = load_json(AUTHORIZED_FILE)
                     d[str(cid)] = True
                     save_json(AUTHORIZED_FILE, d)
-                    send(cid, "Accès autorisé !\n/add <wallet>")
+                    send(cid, "Acces OK !\n/add <wallet>")
                     continue
 
                 if not is_authorized(cid):
@@ -212,7 +225,7 @@ def bot():
                 if cmd == "/add" and args:
                     w = args.strip()
                     if len(w) < 32:
-                        send(cid, "Wallet invalide")
+                        send(cid, "Invalide")
                         continue
                     cur = load_list(WALLETS_FILE)
                     if w not in cur:
@@ -222,9 +235,12 @@ def bot():
                     if cid not in subs[w]:
                         subs[w].append(cid)
                         save_json(SUBSCRIPTIONS_FILE, subs)
-                        send(cid, "Suivi activé : <code>" + w + "</code>")
+                        send(cid, "Suivi : <code>" + w + "</code>")
                 elif cmd == "/my":
-                    mine = [w for w, users in subs.items() if cid in users]
+                    mine = []
+                    for wallet_key, users in subs.items():
+                        if cid in users:
+                            mine.append(wallet_key)
                     if mine:
                         msg = "<b>Mes wallets :</b>\n"
                         for wallet in mine:
@@ -233,13 +249,18 @@ def bot():
                     else:
                         send(cid, "Aucun")
         except Exception as e:
-            print("Bot ERR:", e)
+            print("Bot ERR: " + str(e))
             time.sleep(5)
 
 # FLASK
 app = Flask(__name__)
-@app.route("/"): return "BOT ON"
-@app.route("/health"): return "OK", 200
+@app.route("/")
+def index():
+    return "ON"
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 # LANCEMENT
 if __name__ == "__main__":
@@ -247,5 +268,5 @@ if __name__ == "__main__":
     threading.Thread(target=test_force, daemon=True).start()
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
-    print("Lancement complet...")
-    app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+    print("Bot lance")
+    app.run(host="0.0.0.0", port=PORT)
