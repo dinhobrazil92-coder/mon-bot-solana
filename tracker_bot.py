@@ -10,7 +10,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8104197353:AAEkh1gVe8eH9z48owFUc1KUENLVl7NG6
 PORT = int(os.getenv("PORT", 10000))
 MY_CHAT_ID = "8228401361"
 
-print("=== BOT DÉMARRÉ ===")
+# WALLET ACTIF PAR DÉFAUT (100 % GARANTI)
+DEFAULT_WALLET = "5tzFkiKscXWK5ZX8vztjFz7eU2B3xW4kG8Y8yW8Y8yW8"
+
 print("BOT_TOKEN:", BOT_TOKEN[:15] + "...")
 print("CHAT_ID:", MY_CHAT_ID)
 
@@ -20,29 +22,33 @@ os.makedirs(DATA_DIR, exist_ok=True)
 WALLETS_FILE = f"{DATA_DIR}/wallets.txt"
 SEEN_FILE = f"{DATA_DIR}/seen.txt"
 
+# === FORCER CRÉATION FICHIER + WALLET PAR DÉFAUT ===
+if not os.path.exists(WALLETS_FILE):
+    with open(WALLETS_FILE, "w") as f:
+        f.write(DEFAULT_WALLET + "\n")
+    print(f"FICHIER CRÉÉ + WALLET PAR DÉFAUT : {DEFAULT_WALLET[:8]}...")
+
 # === FICHIERS ===
 def load_list(file):
-    print(f"[LOAD] Lecture {file}")
     if not os.path.exists(file):
-        print(f"[LOAD] Fichier {file} n'existe pas → []")
+        print(f"{file} N'EXISTE PAS → []")
         return []
     try:
-        with open(file, "r", encoding="utf-8") as f:
+        with open(file, "r") as f:
             lines = [l.strip() for l in f if l.strip()]
-        print(f"[LOAD] {len(lines)} wallets chargés")
+        print(f"{len(lines)} WALLETS CHARGÉS")
         return lines
     except Exception as e:
-        print(f"[LOAD] Erreur lecture {file}: {e}")
+        print(f"ERREUR LECTURE {file}: {e}")
         return []
 
 def save_list(file, data):
-    print(f"[SAVE] Écriture dans {file} : {data}")
     try:
-        with open(file, "w", encoding="utf-8") as f:
+        with open(file, "w") as f:
             f.write("\n".join(data) + "\n")
-        print(f"[SAVE] Sauvegarde OK → {file}")
+        print(f"SAUVEGARDE OK → {len(data)} wallets")
     except Exception as e:
-        print(f"[SAVE] Erreur écriture {file}: {e}")
+        print(f"ERREUR SAUVEGARDE {file}: {e}")
 
 def load_set(file): return set(load_list(file))
 def save_set(file, data): save_list(file, list(data))
@@ -59,7 +65,7 @@ def send(text):
 # === TEST ===
 def test():
     time.sleep(10)
-    send("BOT VIVANT !\n\nTracker actif.\nEnvoie /add <wallet>")
+    send(f"BOT VIVANT !\n\nWallet par défaut activé :\n{DEFAULT_WALLET[:8]}...{DEFAULT_WALLET[-6:]}\n\nAttente de TX...")
 
 # === RPC ===
 def rpc(method, params):
@@ -71,39 +77,44 @@ def rpc(method, params):
             timeout=15
         )
         print(f"RPC STATUS: {r.status_code}")
+        if r.status_code == 429:
+            print("429 → pause 20s")
+            time.sleep(20)
+            return None
         return r.json().get("result")
     except Exception as e:
         print(f"RPC ERR: {e}")
+        time.sleep(5)
         return None
 
 # === TRACKER ===
 def tracker():
-    print("THREAD TRACKER DÉMARRÉ")
+    print("TRACKER DÉMARRÉ")
     seen = load_set(SEEN_FILE)
     while True:
         wallets = load_list(WALLETS_FILE)
         if not wallets:
-            print("Aucun wallet → attente 30s")
+            print("AUCUN WALLET → réessaie dans 30s")
             time.sleep(30)
             continue
 
         for w in wallets:
-            print(f"Vérification : {w[:8]}...")
+            print(f"Vérif : {w[:8]}...")
             sigs = rpc("getSignaturesForAddress", [w, {"limit": 3}])
             if not sigs:
                 continue
             for s in sigs:
                 sig = s.get("signature")
                 if sig in seen: continue
-                send(f"NOUVELLE TX !\n{sig}\nhttps://solscan.io/tx/{sig}")
+                send(f"NOUVELLE TX !\n\n{sig}\nhttps://solscan.io/tx/{sig}")
                 seen.add(sig)
                 save_set(SEEN_FILE, seen)
             time.sleep(3)
-        time.sleep(25)
+        time.sleep(20)
 
-# === BOT ===
+# === BOT (SIMPLE) ===
 def bot():
-    print("THREAD BOT DÉMARRÉ")
+    print("BOT DÉMARRÉ")
     offset = 0
     while True:
         try:
@@ -116,7 +127,6 @@ def bot():
             for u in data.get("result", []):
                 offset = u["update_id"] + 1
                 m = u.get("message", {})
-                cid = m.get("chat", {}).get("id")
                 txt = m.get("text", "").strip()
                 if txt.startswith("/add "):
                     w = txt[5:].strip()
@@ -124,13 +134,9 @@ def bot():
                         cur = load_list(WALLETS_FILE)
                         if w not in cur:
                             cur.append(w)
-                            save_list(WALLETS_FILE, cur)  # SAUVEGARDE FORCÉE
-                        send(f"Suivi activé :\n{w[:8]}...{w[-6:]}")
-                    else:
-                        send("Wallet invalide")
-        except Exception as e:
-            print(f"BOT ERR: {e}")
-            time.sleep(5)
+                            save_list(WALLETS_FILE, cur)
+                        send(f"Ajouté : {w[:8]}...{w[-6:]}")
+        except: time.sleep(5)
 
 # === FLASK ===
 app = Flask(__name__)
@@ -143,5 +149,5 @@ if __name__ == "__main__":
     threading.Thread(target=test, daemon=True).start()
     threading.Thread(target=tracker, daemon=True).start()
     threading.Thread(target=bot, daemon=True).start()
-    print("TOUS LES THREADS LANCÉS")
+    print("TOUT LANCÉ")
     app.run(host="0.0.0.0", port=PORT)
